@@ -58,33 +58,51 @@ class OnlineSearchManager:
     def search(self, query: str) -> List[SearchResult]:
         """Search the web for relevant information."""
         try:
-            results = self.tavily_search.invoke(query)
+            # Enhance query to specifically target Python LangGraph library
+            enhanced_query = f"{query} python langgraph library"
+            logger.info(f"Searching with enhanced query: '{enhanced_query}'")
+
+            results = self.tavily_search.invoke(enhanced_query)
+            logger.info(f"Tavily raw response type: {type(results)}")
+            logger.info(f"Tavily raw response: {results}")
 
             search_results = []
             if isinstance(results, str):
                 # Parse the string response
                 parsed_results = self._parse_tavily_response(results)
+            elif isinstance(results, dict):
+                # Tavily returns a dict with 'results' key
+                parsed_results = results.get("results", [])
+                logger.info(f"Extracted results from dict: {len(parsed_results)} items")
             elif isinstance(results, list):
                 parsed_results = results
             else:
                 parsed_results = []
+                logger.warning(f"Unexpected Tavily response type: {type(results)}")
+
+            logger.info(f"Parsed {len(parsed_results)} results from Tavily")
 
             for result in parsed_results:
+                # Prefer raw_content if available, fall back to content
+                content = result.get("raw_content") or result.get("content", "")
+
                 search_result = SearchResult(
                     title=result.get("title", ""),
                     url=result.get("url", ""),
-                    content=result.get("content", ""),
+                    content=content,
                     relevance_score=result.get("score", 0.5),
                     recency_score=self._calculate_recency_score(
                         result.get("published_date", "")
                     ),
                 )
                 search_results.append(search_result)
+                logger.debug(f"Added search result: {search_result.title} (content length: {len(content)})")
 
+            logger.info(f"OnlineSearchManager.search() returning {len(search_results)} results")
             return search_results
 
         except Exception as e:
-            print(f"Error during online search: {e}")
+            logger.error(f"Error during online search: {e}", exc_info=True)
             return []
 
     def _parse_tavily_response(self, response_str: str) -> List[Dict]:

@@ -131,9 +131,12 @@ class OnlineSearchAgent:
 
     def search(self, query: str) -> EvidencePack:
         """Search online for information."""
+        logger.info(f"OnlineSearchAgent.search() called with query: '{query}'")
         results = self.search_manager.search(query)
+        logger.info(f"OnlineSearchManager returned {len(results) if results else 0} results")
 
         if not results:
+            logger.warning(f"No results found from Tavily search for query: '{query}'")
             return EvidencePack(
                 mode="online",
                 context_text="",
@@ -141,19 +144,25 @@ class OnlineSearchAgent:
                 notes="No web search results found",
             )
 
+        logger.info(f"Before validation/reranking: {len(results)} results")
         # Validate and rerank results
         results = self.search_manager.validate_and_rerank(results, query)
+        logger.info(f"After validation/reranking: {len(results)} results")
 
-        # Combine top results
+        # Combine top results (with more content for better answers)
         context_parts = []
-        for i, result in enumerate(results[:3]):  # Top 3 results
+        for i, result in enumerate(results[:5]):  # Top 5 results for more context
+            # Use full content if available, otherwise show more characters
+            content_preview = result.content if len(result.content) < 1500 else result.content[:1500] + "..."
             context_parts.append(
                 f"[{i+1}] {result.title}\nSource: {result.url}\n"
-                f"Content: {result.content[:500]}...\n"
+                f"Content: {content_preview}\n"
                 f"Relevance: {result.relevance_score:.2f}"
             )
+            logger.debug(f"Added result {i+1}: {result.title} (score: {result.relevance_score:.2f})")
 
         context_text = "\n\n---\n\n".join(context_parts)
+        logger.info(f"Context text length: {len(context_text)} characters")
 
         # Average relevance score as confidence
         avg_confidence = (
@@ -161,6 +170,7 @@ class OnlineSearchAgent:
             if results
             else 0.0
         )
+        logger.info(f"Average confidence: {avg_confidence:.2f}")
 
         return EvidencePack(
             mode="online",
@@ -227,7 +237,13 @@ class AnswerGenerationAgent:
                 "If the information is not in the provided context, you MUST say 'This information is not available in the provided context.' "
                 "Do not make assumptions or fill in gaps with general knowledge. "
                 "Only cite what is explicitly stated in the context. "
-                "Be direct and concise in your answers."
+                "When answering, prioritize practical information including:\n"
+                "- How to use features (step-by-step instructions)\n"
+                "- Code examples and syntax\n"
+                "- Required imports and setup\n"
+                "- Configuration options and parameters\n"
+                "- Common use cases and patterns\n"
+                "Be direct, specific, and actionable in your answers."
             )
         )
 
