@@ -1,50 +1,24 @@
 """
 Document Fetcher - Infrastructure layer.
 Handles downloading and versioning of multiple documentation sources.
-Implements smart change detection with temporary directories and partial rebuilds.
+Implements change detection with temporary directories and partial rebuilds.
 """
 
-import os
 import hashlib
+import json
 import logging
 import shutil
 from typing import List, Dict, Optional, Tuple, Set
 from pathlib import Path
 import re
-from datetime import datetime
 
 import requests
 
 from app.core import settings
+from app.core.models import DocumentMetadata
 
 # Configure logging
 logger = logging.getLogger(__name__)
-
-
-class DocumentMetadata:
-    """Stores metadata about a document including hash for change detection."""
-
-    def __init__(self, source: str, url: str, local_path: str, file_hash: str = ""):
-        self.source = source  # "langgraph" or "langchain"
-        self.url = url
-        self.local_path = local_path
-        self.file_hash = file_hash
-        self.last_updated = datetime.now().isoformat()
-
-    def to_dict(self) -> Dict:
-        return {
-            "source": self.source,
-            "url": self.url,
-            "local_path": self.local_path,
-            "file_hash": self.file_hash,
-            "last_updated": self.last_updated,
-        }
-
-    @staticmethod
-    def from_dict(data: Dict) -> "DocumentMetadata":
-        meta = DocumentMetadata(data["source"], data["url"], data["local_path"], data.get("file_hash", ""))
-        meta.last_updated = data.get("last_updated", "")
-        return meta
 
 
 class DocumentFetcher:
@@ -411,9 +385,8 @@ class DocumentFetcher:
             return []
 
         try:
-            import json
             data = json.loads(self.metadata_file.read_text())
-            return [DocumentMetadata.from_dict(m) for m in data]
+            return [DocumentMetadata(**m) for m in data]
         except Exception as e:
             logger.warning(f"Failed to load metadata: {e}")
             return []
@@ -421,8 +394,7 @@ class DocumentFetcher:
     def _save_metadata(self, metadata: List[DocumentMetadata]):
         """Save document metadata to file."""
         try:
-            import json
-            data = [m.to_dict() for m in metadata]
+            data = [m.model_dump() for m in metadata]
             self.metadata_file.write_text(json.dumps(data, indent=2))
             logger.info(f"Saved metadata for {len(metadata)} documents")
         except Exception as e:

@@ -1,6 +1,5 @@
 """
 Core layer - contains domain models and configuration.
-Follows onion architecture - innermost layer.
 """
 
 from .models import (

@@ -155,9 +155,16 @@ class VectorStoreManager:
         self.embedding_model = SentenceTransformer(model_name)
         self.vector_store: Optional[faiss.IndexFlatL2] = None
         self.chunks: List[str] = []
+        self.chunk_metadata: List[Dict[str, str]] = []  # Metadata for each chunk (source file, etc.)
 
-    def create_index(self, chunks: List[str]) -> None:
-        """Create FAISS index from document chunks."""
+    def create_index(self, chunks: List[str], metadata: Optional[List[Dict[str, str]]] = None) -> None:
+        """
+        Create FAISS index from document chunks.
+
+        Args:
+            chunks: List of text chunks to embed
+            metadata: Optional list of metadata dicts for each chunk (e.g., {"source": "filename.md"})
+        """
         logger.info(f"Creating index from {len(chunks)} chunks")
         # Generate embeddings
         logger.info("Generating embeddings for all chunks...")
@@ -172,10 +179,14 @@ class VectorStoreManager:
         logger.info(f"FAISS index created with dimension {dimension}")
 
         self.chunks = chunks
+        self.chunk_metadata = metadata or [{"source": "unknown"} for _ in chunks]
         logger.info("Index creation complete")
 
     def search(self, query: str, k: int = 5) -> List[tuple]:
-        """Search for top-k similar chunks."""
+        """
+        Search for top-k similar chunks.
+        Returns list of tuples: (chunk_text, distance, metadata_dict)
+        """
         if self.vector_store is None:
             return []
 
@@ -187,7 +198,8 @@ class VectorStoreManager:
         results = []
         for distance, idx in zip(distances[0], indices[0]):
             if idx < len(self.chunks):
-                results.append((self.chunks[idx], float(distance)))
+                metadata = self.chunk_metadata[idx] if idx < len(self.chunk_metadata) else {"source": "unknown"}
+                results.append((self.chunks[idx], float(distance), metadata))
 
         return results
 
@@ -196,9 +208,12 @@ class VectorStoreManager:
         os.makedirs(path, exist_ok=True)
         faiss.write_index(self.vector_store, os.path.join(path, "index.faiss"))
 
-        # Save chunks separately
+        # Save chunks and metadata separately
         with open(os.path.join(path, "chunks.json"), "w") as f:
             json.dump(self.chunks, f)
+
+        with open(os.path.join(path, "metadata.json"), "w") as f:
+            json.dump(self.chunk_metadata, f)
 
     def load(self, path: str) -> None:
         """Load vector store from disk."""
@@ -206,6 +221,14 @@ class VectorStoreManager:
 
         with open(os.path.join(path, "chunks.json"), "r") as f:
             self.chunks = json.load(f)
+
+        # Load metadata if it exists (backward compatible)
+        metadata_path = os.path.join(path, "metadata.json")
+        if os.path.exists(metadata_path):
+            with open(metadata_path, "r") as f:
+                self.chunk_metadata = json.load(f)
+        else:
+            self.chunk_metadata = [{"source": "unknown"} for _ in self.chunks]
 
 
 class KnowledgeBaseManager:
@@ -332,14 +355,14 @@ class KnowledgeBaseManager:
             logger.info(f"Starting agentic chunking for {len(all_documents)} documents...")
 
             # Create chunks using intelligent agentic chunking with parallelization
-            chunks = self._chunk_documents(all_documents)
+            chunks, chunk_metadata = self._chunk_documents(all_documents)
 
             logger.info(f"Created {len(chunks)} embedding chunks from {len(all_documents)} documents")
             print(f"Created {len(chunks)} embedding chunks from {len(all_documents)} documents")
 
-            # Create vector index
-            logger.info("Creating vector index from chunks...")
-            self.vector_store.create_index(chunks)
+            # Create vector index with metadata
+            logger.info("Creating vector index from chunks with metadata...")
+            self.vector_store.create_index(chunks, metadata=chunk_metadata)
             logger.info("Vector index created successfully")
 
             logger.info(f"Saving vector store to {settings.vector_store_path}")
@@ -369,12 +392,13 @@ class KnowledgeBaseManager:
             print(f"Error building KB: {e}")
             return False
 
-    def _chunk_documents(self, documents: Dict[str, str]) -> List[str]:
+    def _chunk_documents(self, documents: Dict[str, str]) -> Tuple[List[str], List[Dict[str, str]]]:
         """
         Chunk documents intelligently with parallelization:
         - Files below threshold: embed as-is
         - Files above threshold: use agentic chunking in parallel
 
+        Returns tuple of (chunks, metadata) where metadata tracks source file for each chunk.
         Threshold is configurable in .env via agentic_chunking_threshold_kb (in KB).
         """
         threshold_bytes = settings.agentic_chunking_threshold_kb * 1024
@@ -394,12 +418,14 @@ class KnowledgeBaseManager:
                 large_docs.append((file_name, content))
 
         chunks = []
+        chunk_metadata = []
 
         # Add small documents as-is
         logger.info(f"Embedding {len(small_docs)} small documents as-is")
         for file_name, content in small_docs:
             logger.info(f"  {file_name}: {len(content.encode('utf-8'))} bytes (embedding as-is)")
             chunks.append(content)
+            chunk_metadata.append({"source": file_name})
 
         # Process large documents in parallel using agentic chunking
         if large_docs:
@@ -418,13 +444,19 @@ class KnowledgeBaseManager:
                         file_chunks = future.result()
                         logger.info(f"  {file_name}: produced {len(file_chunks)} chunks")
                         chunks.extend(file_chunks)
+                        # Add metadata for each chunk from this file
+                        for _ in file_chunks:
+                            chunk_metadata.append({"source": file_name})
                     except Exception as e:
                         logger.error(f"  {file_name}: chunking failed - {e}")
 
-        return chunks
+        return chunks, chunk_metadata
 
     def search_offline(self, query: str, top_k: Optional[int] = None) -> List[tuple]:
-        """Search the local knowledge base."""
+        """
+        Search the local knowledge base.
+        Returns list of tuples: (chunk_text, distance, metadata_dict)
+        """
         logger.info(f"search_offline() called with query: '{query}'")
         if self.vector_store.vector_store is None:
             logger.error("Vector store is None - KB may not be loaded")
@@ -437,13 +469,13 @@ class KnowledgeBaseManager:
 
         if results:
             logger.info(f"Top result distance: {results[0][1]}, similarity_threshold: {settings.similarity_threshold}")
-            for i, (chunk, distance) in enumerate(results[:3]):
-                logger.info(f"Result {i}: distance={distance}, chunk_preview='{chunk[:100]}...'")
+            for i, (chunk, distance, metadata) in enumerate(results[:3]):
+                logger.info(f"Result {i}: distance={distance}, source={metadata.get('source', 'unknown')}, chunk_preview='{chunk[:100]}...'")
 
         # Filter by similarity threshold
         filtered_results = [
-            (chunk, distance)
-            for chunk, distance in results
+            (chunk, distance, metadata)
+            for chunk, distance, metadata in results
             if distance <= settings.similarity_threshold
         ]
 

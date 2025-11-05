@@ -3,12 +3,13 @@ Online Search Manager - Infrastructure layer.
 Handles web search and source validation for online mode.
 """
 
-from typing import List, Dict, Optional
+from typing import List, Dict
 from dataclasses import dataclass
 from datetime import datetime
 import json
 import logging
-
+import os
+import re
 from langchain_tavily import TavilySearch
 
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -35,7 +36,6 @@ class OnlineSearchManager:
     """Manages online search via Tavily and validates source credibility."""
 
     def __init__(self):
-        import os
         logger.info(f"Initializing OnlineSearchManager with tavily_api_key={bool(settings.tavily_api_key)}")
 
         if not settings.tavily_api_key:
@@ -148,7 +148,8 @@ class OnlineSearchManager:
             # Fallback: extract basic info from string format
             return self._extract_results_from_string(response_str)
 
-    def _extract_results_from_string(self, response_str: str) -> List[Dict]:
+    @staticmethod
+    def _extract_results_from_string(response_str: str) -> List[Dict]:
         """Extract results from Tavily string response format."""
         results = []
         # This is a simple parser; Tavily response format may vary
@@ -176,8 +177,6 @@ class OnlineSearchManager:
             return 0.5  # Neutral score for unknown dates
 
         try:
-            # Try to parse the date
-            from datetime import datetime
 
             published = datetime.fromisoformat(published_date.replace("Z", "+00:00"))
             now = datetime.now(published.tzinfo) if published.tzinfo else datetime.now()
@@ -218,9 +217,29 @@ class OnlineSearchManager:
 
         system_message = SystemMessage(
             content=(
-                "You are an expert at evaluating the quality and relevance of web search results. "
-                "Assess each source based on: accuracy, relevance to the query, and authority. "
-                "Return a JSON object with scores for each source."
+                "You are an expert at evaluating the quality and relevance of web search results for Python documentation queries. "
+                "\n\n"
+                "Evaluate each source based on these criteria:\n"
+                "1. ACCURACY: Does the content contain factually correct information about the topic? "
+                "   - Official documentation (docs.langchain.com, github.com official repos) = high accuracy\n"
+                "   - Peer-reviewed technical articles = high accuracy\n"
+                "   - Blog posts or unofficial tutorials = may have inaccuracies\n"
+                "2. RELEVANCE: How well does the content answer the specific query?\n"
+                "   - Exact match to query topic = high relevance\n"
+                "   - Related but tangential information = medium relevance\n"
+                "   - General information only = low relevance\n"
+                "3. AUTHORITY: Is the source trustworthy and authoritative?\n"
+                "   - Official documentation sites = highest authority\n"
+                "   - Major tech publications and established blogs = high authority\n"
+                "   - Unknown or low-traffic sites = low authority\n"
+                "\n"
+                "Examples:\n"
+                "- 'docs.langchain.com/langgraph/...' discussing StateGraph: HIGH (official, accurate, directly relevant)\n"
+                "- 'github.com/langchain-ai/langgraph/...' discussing implementation: HIGH (official source)\n"
+                "- 'Medium article on using LangGraph' discussing the same feature: MEDIUM (relevant but unofficial)\n"
+                "- 'Random blog about Python async patterns': LOW (not specific to the query)\n"
+                "\n"
+                "Return a JSON object with scores for each source (0.0-1.0)."
             )
         )
 
@@ -236,10 +255,6 @@ class OnlineSearchManager:
         try:
             response = self.llm.invoke([system_message, human_message])
             response_text = response.content if hasattr(response, "content") else str(response)
-
-            # Extract JSON from response
-            import json
-            import re
 
             json_match = re.search(r"\{.*\}", response_text, re.DOTALL)
             if json_match:
@@ -265,41 +280,3 @@ class OnlineSearchManager:
 
         results.sort(key=lambda x: x.relevance_score, reverse=True)
         return results
-
-    def check_source_agreement(
-        self, results: List[SearchResult], key_claim: str
-    ) -> float:
-        """
-        Check how many sources agree on a key claim.
-        Returns agreement ratio (0.0 to 1.0).
-        """
-        if not results:
-            return 0.0
-
-        agreeing_count = 0
-        system_message = SystemMessage(
-            content="You are an expert at determining if text content supports a specific claim. "
-            "Answer only with 'yes' or 'no'."
-        )
-
-        for result in results:
-            human_message = HumanMessage(
-                content=(
-                    f"Does this content support the claim: '{key_claim}'?\n\n"
-                    f"Content: {result.content[:1000]}"
-                )
-            )
-
-            try:
-                response = self.llm.invoke([system_message, human_message])
-                response_text = (
-                    response.content if hasattr(response, "content") else str(response)
-                )
-
-                if "yes" in response_text.lower():
-                    agreeing_count += 1
-
-            except Exception:
-                pass
-
-        return agreeing_count / len(results) if results else 0.0

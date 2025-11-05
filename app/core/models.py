@@ -4,6 +4,16 @@ from typing import Literal, Optional, List, Dict
 from pydantic import BaseModel, Field
 
 
+class DocumentMetadata(BaseModel):
+    """Stores metadata about a document including hash for change detection."""
+
+    source: Literal["langgraph", "langchain"]
+    url: str
+    local_path: str
+    file_hash: str = ""
+    last_updated: str = Field(default_factory=lambda: datetime.now().isoformat())
+
+
 class EvidencePack(BaseModel):
     mode: Literal["offline", "online"]
     context_text: str
@@ -11,6 +21,8 @@ class EvidencePack(BaseModel):
     coverage_confidence: float
     # Notes such as "no relevant internal info found" or "sources disagree"
     notes: Optional[str] = None
+    # Source details: URLs for online mode, file paths/names for offline mode
+    sources: List[Dict[str, str]] = Field(default_factory=list)
 
 
 
@@ -42,8 +54,7 @@ class KnowledgeBaseSnapshot(BaseModel):
     # When we last successfully updated from remote
     last_updated_at: datetime
 
-    # Marker for the embeddings / vector index version. Could be timestamp,
-    # could be hash of embeddings.
+    # Marker for the embeddings/vector index version.
     embedding_index_version: str
 
     # True means embeddings reflect current text content.

@@ -7,11 +7,12 @@ from typing import List, Dict, Optional, Tuple
 import logging
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import SystemMessage, HumanMessage
-import re
 
 from app.core import settings, EvidencePack, FinalAnswer
 from app.infrastructure import KnowledgeBaseManager, OnlineSearchManager
 from app.infrastructure.telemetry import EvaluationMetrics
+import math
+
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -38,21 +39,46 @@ class OfflineSearchAgent:
                 notes="No relevant chunks found in knowledge base",
             )
 
-        # Combine results
-        context_text = "\n\n---\n\n".join([chunk for chunk, _ in results])
-        avg_distance = sum([dist for _, dist in results]) / len(results)
-        logger.info(f"Average distance: {avg_distance}, similarity_threshold: {settings.similarity_threshold}")
-
-        # Convert distance to confidence (lower distance = higher confidence)
-        coverage_confidence = max(0.0, 1.0 - (avg_distance / settings.similarity_threshold))
+        # Combine results and extract sources
+        context_text = "\n\n---\n\n".join([chunk for chunk, _, _ in results])
+        coverage_confidence = self.compute_coverage_confidence(results, settings.similarity_threshold)
         logger.info(f"Coverage confidence: {coverage_confidence}")
+
+        # Extract unique sources from results
+        sources = []
+        seen_sources = set()
+        for _, _, metadata in results:
+            source = metadata.get('source', 'unknown')
+            if source not in seen_sources:
+                sources.append({"source": source, "type": "offline"})
+                seen_sources.add(source)
+                logger.info(f"Added offline source: {source}")
 
         return EvidencePack(
             mode="offline",
             context_text=context_text,
             coverage_confidence=coverage_confidence,
             notes=f"Retrieved {len(results)} chunks from KB",
+            sources=sources,
         )
+
+    @staticmethod
+    def compute_coverage_confidence(results, threshold: float):
+        distances = sorted(dist for _, dist, _ in results)
+
+        avg_distance = sum(distances) / len(distances)
+        best_distance = distances[0]
+        logger.info(f"Average distance: {avg_distance}, best distance: {best_distance}, similarity_threshold: {settings.similarity_threshold}")
+
+        def dist_to_conf(dist):
+            # exponential falloff; threshold ~ distance where confidence is ~0.37
+            return math.exp(-dist / threshold)
+
+        avg_conf = dist_to_conf(avg_distance)
+        best_conf = dist_to_conf(best_distance)
+
+        coverage_confidence = 0.7 * best_conf + 0.3 * avg_conf
+        return max(0.0, min(1.0, coverage_confidence))
 
 
 class OnlineSearchAgent:
@@ -87,6 +113,9 @@ class OnlineSearchAgent:
 
         # Combine top results (with more content for better answers)
         context_parts = []
+        sources = []
+        seen_urls = set()
+
         for i, result in enumerate(results[:5]):  # Top 5 results for more context
             # Use full content if available, otherwise show more characters
             content_preview = result.content if len(result.content) < 1500 else result.content[:1500] + "..."
@@ -96,6 +125,12 @@ class OnlineSearchAgent:
                 f"Relevance: {result.relevance_score:.2f}"
             )
             logger.debug(f"Added result {i+1}: {result.title} (score: {result.relevance_score:.2f})")
+
+            # Track unique sources
+            if result.url not in seen_urls:
+                sources.append({"source": result.url, "title": result.title, "type": "online"})
+                seen_urls.add(result.url)
+                logger.info(f"Added online source: {result.url}")
 
         context_text = "\n\n---\n\n".join(context_parts)
         logger.info(f"Context text length: {len(context_text)} characters")
@@ -113,6 +148,7 @@ class OnlineSearchAgent:
             context_text=context_text,
             coverage_confidence=avg_confidence,
             notes=f"Retrieved {len(results)} web results",
+            sources=sources,
         )
 
 
@@ -143,10 +179,35 @@ class AnswerGenerationAgent:
                 contexts.append(pack.context_text)
                 if pack.mode == "offline":
                     used_offline = True
-                    citations.append({"label": "[KB]", "source": "Internal KB", "note": "offline source"})
+                    # Use actual sources from pack
+                    for i, source_info in enumerate(pack.sources):
+                        label = f"[{i+1}]"
+                        citations.append({
+                            "label": label,
+                            "source": source_info.get("source", "Unknown KB file"),
+                            "note": "offline source"
+                        })
+                        logger.info(f"Added offline citation: {label} -> {source_info.get('source', 'Unknown KB file')}")
+                    # Fallback if no sources
+                    if not pack.sources:
+                        citations.append({"label": "[KB]", "source": "Internal KB", "note": "offline source"})
                 elif pack.mode == "online":
                     used_online = True
-                    citations.append({"label": "[Web]", "source": "Web Search", "note": "online source"})
+                    # Use actual URLs from pack
+                    for i, source_info in enumerate(pack.sources):
+                        label = f"[{i+1}]"
+                        title = source_info.get("title", "")
+                        url = source_info.get("source", "")
+                        citations.append({
+                            "label": label,
+                            "source": url,
+                            "title": title if title else url,
+                            "note": "online source"
+                        })
+                        logger.info(f"Added online citation: {label} -> {title or url}")
+                    # Fallback if no sources
+                    if not pack.sources:
+                        citations.append({"label": "[Web]", "source": "Web Search", "note": "online source"})
 
         combined_context = "\n\n---\n\n".join(contexts)
 
