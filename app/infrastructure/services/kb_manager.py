@@ -21,7 +21,7 @@ from langchain_core.messages import SystemMessage, HumanMessage
 
 from app.core import settings
 from app.core.models import KnowledgeBaseSnapshot
-from app.infrastructure.document_fetcher import DocumentFetcher
+from app.infrastructure.services.document_fetcher import DocumentFetcher
 
 # Configure logging
 logging.basicConfig(

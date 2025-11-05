@@ -1,9 +1,8 @@
 """
-Application layer - contains business logic and use cases.
-Follows onion architecture - orchestrates domain logic and infrastructure.
+Application layer - contains abstract interfaces.
+Follows onion architecture - defines contracts for infrastructure implementations.
 """
 
-from .workflow import WorkflowOrchestrator, get_workflow
 from .interfaces import (
     DecompositionAgent,
     SearchAgent,
@@ -14,8 +13,6 @@ from .interfaces import (
 )
 
 __all__ = [
-    "WorkflowOrchestrator",
-    "get_workflow",
     "DecompositionAgent",
     "SearchAgent",
     "AnswerAgent",

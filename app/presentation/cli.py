@@ -18,7 +18,7 @@ from app.core import settings
 if settings.tavily_api_key and not os.environ.get("TAVILY_API_KEY"):
     os.environ["TAVILY_API_KEY"] = settings.tavily_api_key
 
-from app.application import get_workflow
+from app.infrastructure import get_workflow
 from app.infrastructure import KnowledgeBaseManager
 
 app = typer.Typer(
@@ -175,7 +175,7 @@ def build_kb(
 @app.command()
 def stats() -> None:
     """Show telemetry and performance statistics."""
-    from app.infrastructure.telemetry import TelemetryLogger, EvaluationMetrics
+    from app.infrastructure.services import TelemetryLogger, EvaluationMetrics
 
     console.print("[cyan]Loading telemetry data...[/cyan]")
 

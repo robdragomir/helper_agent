@@ -1,0 +1,49 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+.venv/
+*.egg-info/
+dist/
+build/
+.tox/
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs (local only, not needed in image)
+logs/
+*.log
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Project-specific
+.env
+.env.local
+.env.*.local
+*.md
+LICENSE
+
+# Docker
+Dockerfile
+.dockerignore
+docker-compose.yml

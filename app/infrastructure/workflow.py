@@ -1,5 +1,5 @@
 """
-LangGraph Workflow Orchestration - Application layer.
+LangGraph Workflow Orchestration - Infrastructure layer.
 Defines the multi-agent workflow using LangGraph.
 """
 
@@ -32,8 +32,8 @@ from app.infrastructure.agents import (
     AnswerGenerationAgent as AnswerGenerationAgentImpl,
     GuardrailAgentImpl,
 )
-from app.infrastructure.telemetry import TelemetryLogger as TelemetryLoggerImpl
-from app.infrastructure.telemetry import EvaluationMetrics as EvaluationMetricsImpl
+from app.infrastructure.services import TelemetryLogger as TelemetryLoggerImpl
+from app.infrastructure.services import EvaluationMetrics as EvaluationMetricsImpl
 
 
 # Workflow State
@@ -89,19 +89,31 @@ class WorkflowOrchestrator:
         self.graph = self._build_graph()
 
     def _build_graph(self) -> StateGraph:
-        """Build the LangGraph workflow for query decomposition and answering."""
+        """Build the LangGraph workflow for query validation, decomposition, and answering."""
         import logging
         logger = logging.getLogger(__name__)
         graph = StateGraph(dict)
 
         # Add nodes
+        graph.add_node("guardrail", self._guardrail_node)
         graph.add_node("decompose", self._decompose_node)
         graph.add_node("process_subquestion", self._process_subquestion_node)
         graph.add_node("validate_answer", self._validate_answer_node)
         graph.add_node("finalize", self._finalize_node)
 
-        # Start with decomposition
-        graph.add_edge(START, "decompose")
+        # Start with guardrail check
+        graph.add_edge(START, "guardrail")
+
+        # Guardrail -> decomposition (or reject if not safe/in-scope)
+        graph.add_conditional_edges(
+            "guardrail",
+            self._check_guardrail_decision,
+            {
+                "allow": "decompose",
+                "reject": "finalize",
+                "block": "finalize"
+            }
+        )
 
         # Decompose -> process subquestions (loop)
         graph.add_edge("decompose", "process_subquestion")
@@ -123,6 +135,53 @@ class WorkflowOrchestrator:
         graph.add_edge("finalize", END)
 
         return graph.compile()
+
+    def _guardrail_node(self, state: WorkflowState) -> WorkflowState:
+        """Check query for safety and relevance using the guardrail agent."""
+        import logging
+        logger = logging.getLogger(__name__)
+
+        query = state["query"]
+        logger.info(f"_guardrail_node: Validating query for safety and relevance")
+
+        # Validate query using guardrail agent
+        guardrail_result = self.guardrail_agent.validate(query)
+        state["guardrail_result"] = guardrail_result
+
+        logger.info(f"_guardrail_node: Guardrail result: {guardrail_result['decision']}")
+        logger.info(f"  is_safe: {guardrail_result['is_safe']}")
+        logger.info(f"  is_in_scope: {guardrail_result['is_in_scope']}")
+        logger.info(f"  reason: {guardrail_result['reason']}")
+
+        return state
+
+    def _check_guardrail_decision(self, state: WorkflowState) -> str:
+        """Route based on guardrail decision."""
+        guardrail_result = state.get("guardrail_result", {})
+        decision = guardrail_result.get("decision", "allow")
+
+        if decision == "allow":
+            return "allow"
+        elif decision == "reject":
+            # Create an answer indicating the query is out of scope
+            state["final_answer"] = FinalAnswer(
+                text=f"I can only help with LangChain, LangGraph, and related AI engineering topics. {guardrail_result.get('reason', 'Your query appears to be out of scope.')}",
+                used_offline=False,
+                used_online=False,
+                answer_confidence=0.0,
+                citations=[],
+            )
+            return "reject"
+        else:  # block
+            # Create an answer indicating the query is blocked for safety
+            state["final_answer"] = FinalAnswer(
+                text=f"I cannot process this request for safety reasons. {guardrail_result.get('reason', 'Your query contains inappropriate content.')}",
+                used_offline=False,
+                used_online=False,
+                answer_confidence=0.0,
+                citations=[],
+            )
+            return "block"
 
     def _decompose_node(self, state: WorkflowState) -> WorkflowState:
         """Decompose the user query into subquestions."""
@@ -241,7 +300,7 @@ class WorkflowOrchestrator:
             return "finalize"
 
     def _validate_answer_node(self, state: WorkflowState) -> WorkflowState:
-        """Validate the final answer for safety."""
+        """Get the final answer from question_answers (guardrail check already happened at query level)."""
         import logging
         logger = logging.getLogger(__name__)
 
@@ -257,16 +316,9 @@ class WorkflowOrchestrator:
 
         _, final_answer, _ = state["question_answers"][final_question_id]
 
-        # Validate for safety
-        is_valid, reason = self.guardrail_agent.validate(final_answer)
-        state["guardrail_passed"] = is_valid
-
-        if not is_valid:
-            final_answer.text = f"I cannot provide that answer due to safety concerns: {reason}"
-            final_answer.answer_confidence = 0.0
-
+        # Store the final answer (guardrail check already happened at the query level)
         state["final_answer"] = final_answer
-        logger.info(f"_validate_answer_node: Answer validated, is_valid={is_valid}")
+        logger.info(f"_validate_answer_node: Retrieved final answer for question {final_question_id}")
         return state
 
     def _finalize_node(self, state: WorkflowState) -> WorkflowState:

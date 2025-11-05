@@ -5,7 +5,7 @@ Online search agent implementation.
 import logging
 
 from app.core import EvidencePack
-from app.infrastructure import OnlineSearchManager
+from app.infrastructure.services import OnlineSearchManager
 from app.application.interfaces import SearchAgent
 
 logger = logging.getLogger(__name__)

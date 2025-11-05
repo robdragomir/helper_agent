@@ -7,7 +7,7 @@ import logging
 import math
 
 from app.core import settings, EvidencePack
-from app.infrastructure import KnowledgeBaseManager
+from app.infrastructure.services import KnowledgeBaseManager
 from app.application.interfaces import SearchAgent
 
 logger = logging.getLogger(__name__)

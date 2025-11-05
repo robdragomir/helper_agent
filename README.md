@@ -30,8 +30,8 @@ This project follows **onion architecture** pattern with clear separation of con
 │   - Answer Generation Agent (context-aware)              │
 │   - Guardrail Agent (safety validation)                  │
 │   - Telemetry Logger & Evaluation Metrics                │
-│   - KB Manager (agentic chunking + FAISS)               │
-│   - Online Search Manager (Tavily integration)          │
+│   - KB Manager (agentic chunking + FAISS)                │
+│   - Online Search Manager (Tavily integration)           │
 └──────────────────────────────────────────────────────────┘
             ↓
 ┌──────────────────────────────────────────────────────────┐
@@ -50,42 +50,52 @@ This project follows **onion architecture** pattern with clear separation of con
   - LangChain documentation (latest release)
 - **Search Method**: Semantic similarity using FAISS vector store
 - **Embedding Model**: `all-MiniLM-L6-v2` (384-dim vectors)
-- **Processing**: Instant responses (no API calls, no latency)
+- **Processing time**: 10-20s -> LLM inference time
 - **Data Freshness**: Updated when you run `build-kb` (detects changes via SHA256 hashing)
-- **Cost**: Free (no API costs)
+- **Cost**: Requires Gemini API key (you can get it from: https://aistudio.google.com/) [free tier available]
 
 ### Online Mode
 - **Command**: `python -m main ask "question" --mode online`
 - **Data Source**: Web search via Tavily API
 - **Search Method**: Full-text web search with relevance scoring
 - **Result Validation**: LLM-based credibility assessment
-- **Processing**: Network latency + LLM inference time
+- **Processing**: 20-30s -> Network latency + LLM inference time
 - **Data Freshness**: Real-time (always latest information)
-- **Cost**: Requires Tavily API key (credits-based pricing)
+- **Cost**: Requires both Gemini and Tavily API key (https://app.tavily.com/) [free tier available]
 
 ## Key Features
 
 ### Intelligent Query Processing
 - **Query Decomposition**: Complex questions broken into simpler subquestions
 - **Dependency Tracking**: Subquestions can depend on answers from previous questions
-- **Context Synthesis**: Answers combined intelligently for final response
-- **Conversation History**: Multi-turn conversations maintained in interactive mode
+- **Context Synthesis**: Answers combined and provided as context for final response
+- **Conversation History**: Multi-turn conversations maintained in interactive mode (needs some fixes to work correctly, 
+                            as the Query Decomposition agent does not currently take into account the conversation history)
 
 ### Advanced RAG System
-- **Agentic Chunking**: LLM-driven semantic document chunking (configurable size: default 2000 chars)
+- **Agentic Chunking**: LLM-driven semantic document chunking based on natural boundaries
+  - LLM identifies meaningful sections (topics, concepts, logical groupings) and chunks accordingly
+  - No fixed chunk size - semantic boundaries determine chunk size dynamically
+  - Fallback strategy uses 2000 char limit only if LLM chunking fails
 - **Vector Store**: FAISS with `all-MiniLM-L6-v2` embeddings for efficient similarity search
 - **Change Detection**: SHA256-based detection of documentation updates
 - **Source Tracking**: Original file sources preserved through chunking to final citations
 - **Metadata Management**: Chunks include file source and context information
 
+### Query Validation & Safety (Entry Point)
+- **Guardrail Agent**: Checks user queries BEFORE any processing for:
+  - Topic relevance (LangChain, LangGraph, RAG, AI engineering topics only)
+  - Safety & appropriateness (blocks hate speech, illegal requests, self-harm)
+  - Returns decision: allow → continue, reject → out-of-scope message, block → safety message
+- **Early Exit**: Out-of-scope and unsafe queries are rejected immediately without processing
+
 ### Smart Answer Generation
 - **Offline Search Agent**: Semantic search retrieving top-K chunks (default: 5)
 - **Online Search Agent**: Web search with result validation and reranking
 - **Answer Generation**: Context-aware answers using conversation history
-- **Safety Validation**: Guardrail agent checks for harmful/unsafe content
 
 ### Quality & Observability
-- **Confidence Scoring**: 60% evidence quality + 40% answer faithfulness
+- **Confidence Scoring**: 60% evidence quality + 40% answer faithfulness [as determined by LLM agent]
 - **Telemetry Logging**: Full inference traces to `data/telemetry.jsonl`
 - **Quality Metrics**:
   - Faithfulness: How well answer is grounded in context (0.0-1.0)
@@ -166,32 +176,27 @@ python -m main stats
 
 ### Docker Deployment
 
-**Build and run with Docker Compose**
-```bash
-# Create .env file with API keys
-cat > .env << EOF
-GOOGLE_API_KEY=your_key_here
-TAVILY_API_KEY=your_key_here
-EOF
-
-# Build image
-docker-compose build
-
-# Run commands
-docker-compose run langgraph-helper ask "How do I use graphs?"
-
-# Interactive mode
-docker-compose run -it langgraph-helper interactive
-
-# Build KB
-docker-compose run langgraph-helper build-kb
-```
-
-**Build and run standalone**
+**Build the image** (builds KB automatically on image creation)
 ```bash
 docker build -t langgraph-helper .
-docker run --env-file .env -it langgraph-helper ask "Your question here"
 ```
+
+**Run CLI commands**
+```bash
+# Ask a question (offline mode)
+docker run --env-file .env langgraph-helper ask "How do I use graphs?" --mode offline
+
+# Ask a question (online mode)
+docker run --env-file .env langgraph-helper ask "What are the latest features?" --mode online
+
+# Interactive mode
+docker run --env-file .env -it langgraph-helper interactive --mode offline
+
+# View help
+docker run langgraph-helper --help
+```
+
+**Note**: The knowledge base is built automatically when the Docker image is created. Pass `--env-file .env` to provide API keys to the container.
 
 ## Project Structure
 
@@ -204,26 +209,27 @@ helper_agent/
 │   │   └── logging_config.py      # Logging configuration (file-based)
 │   │
 │   ├── application/
-│   │   ├── interfaces/            # Abstract interfaces
-│   │   │   ├── decomposition_agent.py    # DecompositionAgent interface
-│   │   │   ├── search_agent.py           # SearchAgent interface
-│   │   │   ├── answer_agent.py           # AnswerAgent interface
-│   │   │   ├── guardrail_agent.py        # GuardrailAgent interface
-│   │   │   ├── telemetry.py              # TelemetryLogger interface
-│   │   │   └── evaluation.py             # EvaluationMetrics interface
-│   │   └── workflow.py            # WorkflowOrchestrator with LangGraph
+│   │   └── interfaces/            # Abstract interfaces (application layer)
+│   │       ├── decomposition_agent.py    # DecompositionAgent interface
+│   │       ├── search_agent.py           # SearchAgent interface
+│   │       ├── answer_agent.py           # AnswerAgent interface
+│   │       ├── guardrail_agent.py        # GuardrailAgent interface
+│   │       ├── telemetry.py              # TelemetryLogger interface
+│   │       └── evaluation.py             # EvaluationMetrics interface
 │   │
 │   ├── infrastructure/
+│   │   ├── workflow.py            # WorkflowOrchestrator with LangGraph
 │   │   ├── agents/                # Agent implementations
 │   │   │   ├── decomposition_agent.py    # Query decomposition
 │   │   │   ├── offline_search.py         # FAISS-based semantic search
 │   │   │   ├── online_search.py          # Tavily web search
 │   │   │   ├── answer_generation.py      # LLM answer generation
 │   │   │   └── guardrail.py              # Safety validation
-│   │   ├── kb_manager.py          # Knowledge base & agentic chunking
-│   │   ├── online_search.py       # Tavily API integration
-│   │   ├── document_fetcher.py    # Download & manage documentation
-│   │   └── telemetry.py           # TelemetryLogger & EvaluationMetrics implementations
+│   │   └── services/              # Infrastructure services
+│   │       ├── kb_manager.py      # Knowledge base & agentic chunking
+│   │       ├── online_search.py   # Tavily API integration
+│   │       ├── document_fetcher.py        # Download & manage documentation
+│   │       └── telemetry.py       # TelemetryLogger & EvaluationMetrics implementations
 │   │
 │   └── presentation/
 │       └── cli.py                 # CLI interface (typer + rich)
@@ -242,8 +248,7 @@ helper_agent/
 │
 ├── main.py                        # Entry point
 ├── requirements.txt               # Python dependencies
-├── Dockerfile                     # Container configuration
-├── docker-compose.yml             # Docker Compose setup
+├── Dockerfile                     # Docker image configuration
 ├── .env.example                   # Environment variable template
 └── README.md                      # This file
 ```
@@ -264,7 +269,7 @@ EMBEDDING_MODEL=all-MiniLM-L6-v2                # Model for semantic embeddings
 # RAG Parameters (Offline Mode)
 TOP_K_CHUNKS=5                                  # Number of knowledge base chunks to retrieve
 SIMILARITY_THRESHOLD=0.3                        # Minimum similarity score to return results
-CHUNK_SIZE_FOR_AGENTIC_CHUNKING=2000            # Character size for semantic chunks
+CHUNK_SIZE_FOR_AGENTIC_CHUNKING=2000            # Fallback max chunk size (only if LLM chunking fails)
 
 # Search Parameters (Online Mode)
 MAX_ONLINE_SEARCH_RESULTS=5                     # Number of web results to retrieve
@@ -289,42 +294,46 @@ The system uses **LangGraph** for orchestration with a stateful graph that proce
 ```
 User Query (+ mode: offline/online)
   ↓
-[Query Decomposition] → LLM breaks complex question into subquestions
-  ├─ Identifies dependencies between subquestions
-  └─ Orders subquestions for logical execution
+[Guardrail Agent] → ENTRY POINT - Validates query BEFORE processing
+  ├─ Check: Is query safe? (blocks hate speech, illegal content, self-harm)
+  ├─ Check: Is query in-scope? (LangChain/LangGraph/RAG/AI engineering)
+  └─ Decision: allow → continue, reject → out-of-scope, block → safety notice
   ↓
-[Process Subquestions] → Loop through each subquestion
-  │
-  ├─ If Offline Mode:
-  │   ├→ [Offline Search Agent] → FAISS semantic similarity search
-  │   └→ Retrieve top-K chunks with metadata & sources
-  │
-  └─ If Online Mode:
-      ├→ [Online Search Agent] → Tavily web search
-      ├→ [Result Validation] → LLM credibility assessment
-      └→ Retrieve top-5 results with relevance scores
-  ↓
-[Answer Generation Agent]
-  ├─ Takes question + retrieved evidence
-  ├─ Uses conversation history for context
-  ├─ Includes dependent answers for synthesis questions
-  ├─ Computes confidence: 60% evidence quality + 40% faithfulness
-  └─ Returns answer with citations
-  ↓
-[Guardrail Agent] → Safety validation
-  ├─ Checks for harmful/unsafe content
-  └─ Rejects if unsafe, keeps answer if safe
-  ↓
-[Telemetry & Metrics]
-  ├─ Logs full inference trace
-  ├─ Computes quality metrics (faithfulness, coverage, etc.)
-  └─ Saves to data/telemetry.jsonl
+IF ALLOWED:
+  ├─ [Query Decomposition] → LLM breaks complex question into subquestions
+  │   ├─ Identifies dependencies between subquestions
+  │   └─ Orders subquestions for logical execution
+  │   ↓
+  ├─ [Process Subquestions] → Loop through each subquestion
+  │   │
+  │   ├─ If Offline Mode:
+  │   │   ├→ [Offline Search Agent] → FAISS semantic similarity search
+  │   │   └→ Retrieve top-K chunks with metadata & sources
+  │   │
+  │   └─ If Online Mode:
+  │       ├→ [Online Search Agent] → Tavily web search
+  │       ├→ [Result Validation] → LLM credibility assessment
+  │       └→ Retrieve top-5 results with relevance scores
+  │   ↓
+  ├─ [Answer Generation Agent]
+  │   ├─ Takes question + retrieved evidence
+  │   ├─ Uses conversation history for context
+  │   ├─ Includes dependent answers for synthesis questions
+  │   ├─ Computes confidence: 60% evidence quality + 40% faithfulness
+  │   └─ Returns answer with citations
+  │   ↓
+  └─ [Telemetry & Metrics]
+      ├─ Logs full inference trace
+      ├─ Computes quality metrics (faithfulness, coverage, etc.)
+      └─ Saves to data/telemetry.jsonl
   ↓
 [Format & Return]
   ├─ Answer (displayed to user)
   ├─ Sources (displayed to user)
   └─ Metadata (logged only, not shown to user)
 ```
+
+**Key Note**: The guardrail agent is the first node in the LangGraph workflow. If the query fails safety or relevance checks, it returns immediately with an appropriate message without consuming computational resources on decomposition or search.
 
 ### State Management with LangGraph
 
@@ -396,46 +405,6 @@ workflow = WorkflowOrchestrator(
 )
 ```
 
-### Extending RAG
-
-**Modify Chunking Strategy**:
-- Edit `app/infrastructure/kb_manager.py` → `AgenticChunker._chunk_documents()`
-- Adjust `CHUNK_SIZE_FOR_AGENTIC_CHUNKING` in `.env`
-
-**Change Embedding Model**:
-- Edit `app/infrastructure/kb_manager.py` → `VectorStoreManager.__init__()`
-- Update `EMBEDDING_MODEL` in `.env`
-
-**Adjust Search Parameters**:
-- `TOP_K_CHUNKS`: Number of chunks to retrieve (default: 5)
-- `SIMILARITY_THRESHOLD`: Minimum similarity score (default: 0.3)
-
-### Custom Quality Metrics
-
-Add new metrics to `app/infrastructure/telemetry.py` → `EvaluationMetrics` class:
-
-```python
-def compute_custom_metric(self, answer: str, context: str) -> float:
-    """Your custom metric implementation."""
-    # LLM evaluation or heuristic-based
-    return score  # 0.0-1.0
-```
-
-### Testing with Dependency Injection
-
-Example: Testing with a mock agent:
-
-```python
-from app.application import WorkflowOrchestrator
-from unittest.mock import Mock
-
-mock_agent = Mock(spec=SearchAgent)
-mock_agent.search.return_value = EvidencePack(...)
-
-workflow = WorkflowOrchestrator(offline_agent=mock_agent)
-result = workflow.run("test query", mode="offline")
-```
-
 ## Troubleshooting
 
 **KB Build Fails**
@@ -454,18 +423,6 @@ result = workflow.run("test query", mode="offline")
 - Consider offline-only mode for speed
 
 **Docker Issues**
-- Ensure .env file exists before running
-- Check volume permissions: `docker-compose run langgraph-helper build-kb`
-- Verify API keys are in .env file
-
-## License
-
-MIT
-
-## Contributing
-
-Contributions welcome! Please ensure:
-- Code follows onion architecture pattern
-- Type hints on all functions
-- Docstrings for public APIs
-- Tests for new features
+- Ensure .env file exists and is in the project directory
+- Verify API keys are set in .env file
+- KB is built during image creation; ensure you have internet connectivity
