@@ -4,7 +4,6 @@ Follows onion architecture - innermost layer.
 """
 
 from .models import (
-    KnowledgeRouteDecision,
     EvidencePack,
     FinalAnswer,
     KnowledgeBaseSnapshot,
@@ -13,7 +12,6 @@ from .models import (
 from .config import settings
 
 __all__ = [
-    "KnowledgeRouteDecision",
     "EvidencePack",
     "FinalAnswer",
     "KnowledgeBaseSnapshot",

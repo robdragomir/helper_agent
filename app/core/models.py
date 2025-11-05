@@ -4,12 +4,6 @@ from typing import Literal, Optional, List, Dict
 from pydantic import BaseModel, Field
 
 
-class KnowledgeRouteDecision(BaseModel):
-    route: Literal["offline", "online", "both", "clarify"]
-    reason: str
-    policy_flags: List[str] = Field(default_factory=list)
-
-
 class EvidencePack(BaseModel):
     mode: Literal["offline", "online"]
     context_text: str
@@ -61,8 +55,8 @@ class InferenceTrace(BaseModel):
     # What the user actually asked
     query_text: str
 
-    # How we chose to route that query
-    route: KnowledgeRouteDecision
+    # The search mode used: offline, online, or both
+    route: Literal["offline", "online", "both"]
 
     # Previews (first N chars) of the evidence we assembled for each path.
     offline_context_preview: Optional[str] = None

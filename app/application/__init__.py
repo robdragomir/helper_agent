@@ -4,7 +4,6 @@ Follows onion architecture - orchestrates domain logic and infrastructure.
 """
 
 from .agents import (
-    RouterAgent,
     OfflineSearchAgent,
     OnlineSearchAgent,
     AnswerGenerationAgent,
@@ -13,7 +12,6 @@ from .agents import (
 from .workflow import WorkflowOrchestrator, get_workflow
 
 __all__ = [
-    "RouterAgent",
     "OfflineSearchAgent",
     "OnlineSearchAgent",
     "AnswerGenerationAgent",

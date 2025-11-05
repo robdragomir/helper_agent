@@ -9,76 +9,12 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import SystemMessage, HumanMessage
 import re
 
-from app.core import settings, KnowledgeRouteDecision, EvidencePack, FinalAnswer
+from app.core import settings, EvidencePack, FinalAnswer
 from app.infrastructure import KnowledgeBaseManager, OnlineSearchManager
 from app.infrastructure.telemetry import EvaluationMetrics
 
 # Configure logging
 logger = logging.getLogger(__name__)
-
-
-class RouterAgent:
-    """Routes queries to appropriate search mode(s)."""
-
-    def __init__(self):
-        self.llm = ChatGoogleGenerativeAI(
-            model=settings.llm_model,
-            google_api_key=settings.google_api_key,
-        )
-
-    def route(self, query: str, forced_mode: Optional[str] = None) -> KnowledgeRouteDecision:
-        """
-        Decide whether to use offline, online, or combined search.
-        Can be overridden by forced_mode argument.
-        """
-        if forced_mode in ["offline", "online", "both"]:
-            return KnowledgeRouteDecision(
-                route=forced_mode,
-                reason=f"User forced {forced_mode} mode",
-                policy_flags=[],
-            )
-
-        system_message = SystemMessage(
-            content=(
-                "You are an expert query router for a LangGraph documentation helper. "
-                "Decide whether to use: 'offline' (local KB), 'online' (web search), "
-                "'both' (combine both sources), or 'clarify' (ask for clarification). "
-                "Consider: specificity of query, likely need for recent info, and whether "
-                "the query relates to core LangGraph concepts vs cutting-edge features."
-            )
-        )
-
-        human_message = HumanMessage(
-            content=(
-                f"Query: {query}\n\n"
-                f"Respond in JSON format: "
-                f"{{'route': 'offline'|'online'|'both'|'clarify', "
-                f"'reason': 'explanation', "
-                f"'policy_flags': [list of concerns if any]}}"
-            )
-        )
-
-        try:
-            response = self.llm.invoke([system_message, human_message])
-            response_text = response.content if hasattr(response, "content") else str(response)
-
-            # Extract JSON
-            import json
-
-            json_match = re.search(r"\{.*\}", response_text, re.DOTALL)
-            if json_match:
-                data = json.loads(json_match.group())
-                return KnowledgeRouteDecision(**data)
-
-        except Exception as e:
-            print(f"Error in router agent: {e}")
-
-        # Default to both if something goes wrong
-        return KnowledgeRouteDecision(
-            route="both",
-            reason="Default routing due to processing error",
-            policy_flags=[],
-        )
 
 
 class OfflineSearchAgent:

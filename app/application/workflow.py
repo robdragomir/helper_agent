@@ -13,13 +13,11 @@ from langgraph.types import Send
 
 from app.core import (
     settings,
-    KnowledgeRouteDecision,
     EvidencePack,
     FinalAnswer,
     InferenceTrace,
 )
 from app.application.agents import (
-    RouterAgent,
     OfflineSearchAgent,
     OnlineSearchAgent,
     AnswerGenerationAgent,
@@ -32,12 +30,14 @@ from app.infrastructure.telemetry import TelemetryLogger, EvaluationMetrics
 class WorkflowState(dict):
     """State management for the workflow."""
 
-    def __init__(self, query: str, forced_mode: Optional[str] = None):
+    def __init__(self, query: str, mode: Optional[str] = None):
         super().__init__()
+        if mode not in ["offline", "online", "both"]:
+            raise ValueError(f"Mode must be 'offline', 'online', or 'both', got '{mode}'")
+
         self["trace_id"] = str(uuid.uuid4())
         self["query"] = query
-        self["forced_mode"] = forced_mode
-        self["route_decision"] = None
+        self["mode"] = mode
         self["offline_evidence"] = None
         self["online_evidence"] = None
         self["final_answer"] = None
@@ -51,7 +51,6 @@ class WorkflowOrchestrator:
     """Orchestrates the multi-agent workflow using LangGraph."""
 
     def __init__(self):
-        self.router_agent = RouterAgent()
         self.offline_agent = OfflineSearchAgent()
         self.online_agent = OnlineSearchAgent()
         self.answer_agent = AnswerGenerationAgent()
@@ -66,20 +65,16 @@ class WorkflowOrchestrator:
         graph = StateGraph(dict)
 
         # Add nodes
-        graph.add_node("route", self._route_node)
         graph.add_node("search_offline", self._search_offline_node)
         graph.add_node("search_online", self._search_online_node)
         graph.add_node("generate_answer", self._generate_answer_node)
         graph.add_node("validate_answer", self._validate_answer_node)
         graph.add_node("finalize", self._finalize_node)
 
-        # Set entry point
-        graph.add_edge(START, "route")
-
-        # Conditional routing based on route decision
+        # Set entry point with conditional routing based on mode
         graph.add_conditional_edges(
-            "route",
-            self._route_condition,
+            START,
+            self._mode_condition,
         )
 
         # Edges after search
@@ -97,26 +92,16 @@ class WorkflowOrchestrator:
 
         return graph.compile()
 
-    def _route_condition(self, state: WorkflowState):
-        """Determine next nodes based on routing decision."""
-        route = state.get("route_decision")
-        route_key = route.route if route else "both"
+    def _mode_condition(self, state: WorkflowState):
+        """Route based on the requested mode."""
+        mode = state.get("mode")
 
-        # Return the appropriate routing based on the key
-        if route_key == "both":
+        if mode == "both":
             return [Send("search_offline", state), Send("search_online", state)]
-        elif route_key == "offline":
+        elif mode == "offline":
             return "search_offline"
         else:  # online
             return "search_online"
-
-    def _route_node(self, state: WorkflowState) -> WorkflowState:
-        """Route the query to appropriate search mode(s)."""
-        route_decision = self.router_agent.route(
-            state["query"], forced_mode=state.get("forced_mode")
-        )
-        state["route_decision"] = route_decision
-        return state
 
     def _search_offline_node(self, state: WorkflowState) -> WorkflowState:
         """Search offline knowledge base."""
@@ -177,7 +162,7 @@ class WorkflowOrchestrator:
 
         trace = InferenceTrace(
             query_text=state["query"],
-            route=state["route_decision"],
+            route=state.get("mode"),
             offline_context_preview=state.get("offline_context_preview"),
             online_context_preview=state.get("online_context_preview"),
             final_answer=state["final_answer"],
@@ -224,9 +209,21 @@ class WorkflowOrchestrator:
 
         return state
 
-    def run(self, query: str, forced_mode: Optional[str] = None) -> FinalAnswer:
-        """Run the complete workflow."""
-        state = WorkflowState(query, forced_mode)
+    def run(self, query: str, mode: str) -> FinalAnswer:
+        """
+        Run the complete workflow.
+
+        Args:
+            query: The user's question
+            mode: The search mode - must be 'offline', 'online', or 'both'
+
+        Returns:
+            FinalAnswer with the response
+
+        Raises:
+            ValueError: If mode is not 'offline', 'online', or 'both'
+        """
+        state = WorkflowState(query, mode)
 
         # Execute the graph
         result_state = self.graph.invoke(state)

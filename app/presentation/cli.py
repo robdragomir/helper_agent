@@ -32,30 +32,32 @@ console = Console()
 @app.command()
 def ask(
     query: str = typer.Argument(..., help="Your question about LangGraph"),
-    mode: Optional[str] = typer.Option(
-        None,
+    mode: str = typer.Option(
+        ...,
         "--mode",
         "-m",
-        help="Search mode: offline, online, or combined (default: auto-decide)",
+        help="Search mode: offline (local KB), online (web search), or both (combine sources)",
     ),
 ) -> None:
     """
     Ask a question about LangGraph.
 
+    You must specify a search mode:
+    - offline: Search only in the local knowledge base
+    - online: Search the web for latest information
+    - both: Search both sources and combine results
+
     Examples:
-        helper-agent ask "How do I create a basic graph?"
+        helper-agent ask "How do I create a basic graph?" --mode offline
         helper-agent ask "What are the latest features?" --mode online
-        helper-agent ask "How does state work?" --mode combined
+        helper-agent ask "How does state work?" --mode both
     """
     # Validate mode
-    if mode and mode not in ["offline", "online", "combined"]:
+    if mode not in ["offline", "online", "both"]:
         console.print(
-            "[red]Error: Mode must be 'offline', 'online', or 'combined'[/red]"
+            "[red]Error: Mode must be 'offline', 'online', or 'both'[/red]"
         )
         raise typer.Exit(1)
-
-    # Map 'combined' to 'both' for internal use
-    internal_mode = "both" if mode == "combined" else mode
 
     console.print(f"[cyan]Processing: {query}[/cyan]")
     console.print()
@@ -63,7 +65,7 @@ def ask(
     try:
         # Get workflow and run
         workflow = get_workflow()
-        answer = workflow.run(query, forced_mode=internal_mode)
+        answer = workflow.run(query, mode=mode)
 
         # Display answer
         console.print(Panel(answer.text, title="Answer", border_style="green"))
@@ -170,12 +172,31 @@ def stats() -> None:
 
 
 @app.command()
-def interactive() -> None:
-    """Start interactive chat mode."""
+def interactive(
+    mode: str = typer.Option(
+        "both",
+        "--mode",
+        "-m",
+        help="Search mode: offline, online, or both",
+    ),
+) -> None:
+    """
+    Start interactive chat mode.
+
+    Uses the specified search mode for all queries in the conversation.
+    Default mode is 'both' (search both local KB and web).
+    """
+    # Validate mode
+    if mode not in ["offline", "online", "both"]:
+        console.print(
+            "[red]Error: Mode must be 'offline', 'online', or 'both'[/red]"
+        )
+        raise typer.Exit(1)
+
     console.print(
         "[cyan bold]LangGraph Helper - Interactive Mode[/cyan bold]"
     )
-    console.print("[dim]Type 'exit' to quit[/dim]\n")
+    console.print(f"[dim]Mode: {mode} | Type 'exit' to quit[/dim]\n")
 
     workflow = get_workflow()
 
@@ -191,7 +212,7 @@ def interactive() -> None:
                 continue
 
             console.print()
-            answer = workflow.run(query)
+            answer = workflow.run(query, mode=mode)
 
             console.print(f"[bold green]Assistant:[/bold green]")
             console.print(answer.text)
