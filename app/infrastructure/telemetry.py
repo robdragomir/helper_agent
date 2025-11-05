@@ -14,9 +14,11 @@ from langchain_core.messages import SystemMessage, HumanMessage
 
 from app.core import settings
 from app.core.models import InferenceTrace, FinalAnswer
+from app.application.interfaces import TelemetryLogger as TelemetryLoggerInterface
+from app.application.interfaces import EvaluationMetrics as EvaluationMetricsInterface
 
 
-class TelemetryLogger:
+class TelemetryLogger(TelemetryLoggerInterface):
     """Logs requests, decisions, and performance metrics."""
 
     def __init__(self):
@@ -47,7 +49,7 @@ class TelemetryLogger:
         return traces
 
 
-class EvaluationMetrics:
+class EvaluationMetrics(EvaluationMetricsInterface):
     """Computes quality metrics for answers."""
 
     def __init__(self):

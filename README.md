@@ -4,67 +4,94 @@ A sophisticated multi-agent system for answering LangGraph documentation questio
 
 ## Architecture
 
-This project follows **onion architecture** pattern:
+This project follows **onion architecture** pattern with clear separation of concerns:
 
 ```
-┌─────────────────────────────────────────────┐
-│   Presentation Layer (CLI)                  │
-│   - User interface with typer               │
-│   - Output formatting with rich             │
-└─────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────┐
+│   Core Layer (Models & Config)                           │
+│   - Pydantic domain models (EvidencePack, FinalAnswer)   │
+│   - Configuration management                             │
+│   - Logging configuration                                │
+└──────────────────────────────────────────────────────────┘
             ↓
-┌─────────────────────────────────────────────┐
-│   Application Layer                         │
-│   - Router Agent (decide search mode)       │
-│   - Offline Search Agent                    │
-│   - Online Search Agent                     │
-│   - Answer Generation Agent                 │
-│   - Guardrail Agent (validation)            │
-│   - LangGraph Workflow Orchestration        │
-└─────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────┐
+│   Application Layer (Interfaces + Orchestration)         │
+│   - Abstract interfaces for all agents                   │
+│   - WorkflowOrchestrator with LangGraph                  │
+│   - Query decomposition into subquestions                │
+│   - Dependency injection for testability                 │
+└──────────────────────────────────────────────────────────┘
             ↓
-┌─────────────────────────────────────────────┐
-│   Infrastructure Layer                      │
-│   - KB Manager (agentic chunking)           │
-│   - Vector Store (FAISS)                    │
-│   - Online Search (Tavily)                  │
-│   - Telemetry & Evaluation                  │
-└─────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────┐
+│   Infrastructure Layer (Implementations)                 │
+│   - Query Decomposition Agent (LLM-based)                │
+│   - Offline Search Agent (FAISS vector search)           │
+│   - Online Search Agent (Tavily + reranking)             │
+│   - Answer Generation Agent (context-aware)              │
+│   - Guardrail Agent (safety validation)                  │
+│   - Telemetry Logger & Evaluation Metrics                │
+│   - KB Manager (agentic chunking + FAISS)               │
+│   - Online Search Manager (Tavily integration)          │
+└──────────────────────────────────────────────────────────┘
             ↓
-┌─────────────────────────────────────────────┐
-│   Core Layer                                │
-│   - Pydantic Models                         │
-│   - Configuration                           │
-└─────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────┐
+│   Presentation Layer (CLI)                               │
+│   - User interface with typer                            │
+│   - Minimal output: answer + sources only                │
+└──────────────────────────────────────────────────────────┘
 ```
 
-## Features
+## Operating Modes
 
-### Multi-Mode Search
-- **Offline Mode**: Uses local RAG with agentic chunking
-- **Online Mode**: Web search with source validation and recency scoring
-- **Combined Mode**: Merges results from both with intelligent reranking
+### Offline Mode
+- **Command**: `python -m main ask "question" --mode offline`
+- **Data Source**: Local knowledge base built from:
+  - LangGraph documentation (latest release)
+  - LangChain documentation (latest release)
+- **Search Method**: Semantic similarity using FAISS vector store
+- **Embedding Model**: `all-MiniLM-L6-v2` (384-dim vectors)
+- **Processing**: Instant responses (no API calls, no latency)
+- **Data Freshness**: Updated when you run `build-kb` (detects changes via SHA256 hashing)
+- **Cost**: Free (no API costs)
 
-### Intelligent Agents
-- **Router Agent**: Automatically decides optimal search strategy
-- **Offline Search Agent**: Semantic search on LangGraph documentation
-- **Online Search Agent**: Web search with source credibility validation
-- **Answer Generation Agent**: Creates coherent answers from evidence
-- **Guardrail Agent**: Validates answers for safety and accuracy
+### Online Mode
+- **Command**: `python -m main ask "question" --mode online`
+- **Data Source**: Web search via Tavily API
+- **Search Method**: Full-text web search with relevance scoring
+- **Result Validation**: LLM-based credibility assessment
+- **Processing**: Network latency + LLM inference time
+- **Data Freshness**: Real-time (always latest information)
+- **Cost**: Requires Tavily API key (credits-based pricing)
 
-### Advanced RAG
-- **Agentic Chunking**: LLM-driven document chunking based on semantic boundaries
-- **Vector Store**: FAISS for efficient similarity search
-- **Embeddings**: Sentence transformers for semantic understanding
-- **Knowledge Base Versioning**: Automatic detection and update of documentation
+## Key Features
 
-### Telemetry & Evaluation
-- **Request Logging**: Full inference traces with routing decisions
+### Intelligent Query Processing
+- **Query Decomposition**: Complex questions broken into simpler subquestions
+- **Dependency Tracking**: Subquestions can depend on answers from previous questions
+- **Context Synthesis**: Answers combined intelligently for final response
+- **Conversation History**: Multi-turn conversations maintained in interactive mode
+
+### Advanced RAG System
+- **Agentic Chunking**: LLM-driven semantic document chunking (configurable size: default 2000 chars)
+- **Vector Store**: FAISS with `all-MiniLM-L6-v2` embeddings for efficient similarity search
+- **Change Detection**: SHA256-based detection of documentation updates
+- **Source Tracking**: Original file sources preserved through chunking to final citations
+- **Metadata Management**: Chunks include file source and context information
+
+### Smart Answer Generation
+- **Offline Search Agent**: Semantic search retrieving top-K chunks (default: 5)
+- **Online Search Agent**: Web search with result validation and reranking
+- **Answer Generation**: Context-aware answers using conversation history
+- **Safety Validation**: Guardrail agent checks for harmful/unsafe content
+
+### Quality & Observability
+- **Confidence Scoring**: 60% evidence quality + 40% answer faithfulness
+- **Telemetry Logging**: Full inference traces to `data/telemetry.jsonl`
 - **Quality Metrics**:
-  - Faithfulness (groundedness in context)
-  - Unsupported claims detection
-  - Retrieval coverage
-  - Source freshness
+  - Faithfulness: How well answer is grounded in context (0.0-1.0)
+  - Unsupported Claims: Count of claims not in context
+  - Retrieval Coverage: Whether retrieved content is relevant (0.0-1.0)
+  - Source Freshness: Recency of online sources (0.0-1.0)
 
 ## Setup
 
@@ -104,35 +131,32 @@ python -m main build-kb
 
 ### CLI Commands
 
-**Ask a question (auto-mode)**
+**Ask a question (offline mode)**
 ```bash
-python -m main ask "How do I create a basic graph?"
+python -m main ask "How do I create a basic graph?" --mode offline
 ```
 
-**Ask with specific mode**
+**Ask a question (online mode)**
 ```bash
-# Offline only
-python -m main ask "How does state work?" --mode offline
-
-# Online only
 python -m main ask "What are the latest LangGraph features?" --mode online
-
-# Combined
-python -m main ask "How do graphs compare to other frameworks?" --mode combined
 ```
 
-**Interactive mode**
+**Interactive mode (follow-up questions)**
 ```bash
-python -m main interactive
+# Start with offline mode, stay in interactive for follow-ups
+python -m main ask "How does state work?" --mode offline --interactive
+
+# Or use the dedicated interactive command
+python -m main interactive --mode offline
 ```
 
 **Build knowledge base**
 ```bash
-# Build KB from remote docs
+# Build KB from remote docs (LangGraph + LangChain)
 python -m main build-kb
 
 # Force rebuild even if up to date
-python -m main build-kb --force
+python -m main build-kb --force-rebuild
 ```
 
 **View statistics**
@@ -175,79 +199,144 @@ docker run --env-file .env -it langgraph-helper ask "Your question here"
 helper_agent/
 ├── app/
 │   ├── core/
-│   │   ├── models.py          # Pydantic domain models
-│   │   └── config.py          # Configuration management
-│   ├── infrastructure/
-│   │   ├── kb_manager.py      # Knowledge base & agentic chunking
-│   │   ├── online_search.py   # Web search & source validation
-│   │   └── telemetry.py       # Logging & evaluation metrics
+│   │   ├── models.py              # Pydantic domain models (EvidencePack, FinalAnswer, etc.)
+│   │   ├── config.py              # Configuration & settings management
+│   │   └── logging_config.py      # Logging configuration (file-based)
+│   │
 │   ├── application/
-│   │   ├── agents.py          # Multi-agent implementations
-│   │   └── workflow.py        # LangGraph orchestration
+│   │   ├── interfaces/            # Abstract interfaces
+│   │   │   ├── decomposition_agent.py    # DecompositionAgent interface
+│   │   │   ├── search_agent.py           # SearchAgent interface
+│   │   │   ├── answer_agent.py           # AnswerAgent interface
+│   │   │   ├── guardrail_agent.py        # GuardrailAgent interface
+│   │   │   ├── telemetry.py              # TelemetryLogger interface
+│   │   │   └── evaluation.py             # EvaluationMetrics interface
+│   │   └── workflow.py            # WorkflowOrchestrator with LangGraph
+│   │
+│   ├── infrastructure/
+│   │   ├── agents/                # Agent implementations
+│   │   │   ├── decomposition_agent.py    # Query decomposition
+│   │   │   ├── offline_search.py         # FAISS-based semantic search
+│   │   │   ├── online_search.py          # Tavily web search
+│   │   │   ├── answer_generation.py      # LLM answer generation
+│   │   │   └── guardrail.py              # Safety validation
+│   │   ├── kb_manager.py          # Knowledge base & agentic chunking
+│   │   ├── online_search.py       # Tavily API integration
+│   │   ├── document_fetcher.py    # Download & manage documentation
+│   │   └── telemetry.py           # TelemetryLogger & EvaluationMetrics implementations
+│   │
 │   └── presentation/
-│       └── cli.py             # CLI interface
+│       └── cli.py                 # CLI interface (typer + rich)
+│
 ├── data/
-│   ├── langgraph-docs.txt     # Downloaded LangGraph documentation
-│   ├── kb_chunks.json         # Agentic chunks (generated)
-│   └── faiss_index/           # Vector store (generated)
+│   ├── sources.json               # Source file hashes for change detection
+│   ├── langgraph-docs/            # Downloaded LangGraph documentation
+│   ├── langchain-docs/            # Downloaded LangChain documentation
+│   ├── kb_chunks.json             # Agentic chunks with metadata (generated)
+│   └── faiss_index/               # FAISS vector store (generated)
+│
 ├── logs/
-│   ├── telemetry.jsonl        # Inference traces
-│   └── eval_metrics.json      # Quality metrics
-├── main.py                    # Entry point
-├── requirements.txt           # Python dependencies
-├── Dockerfile                 # Container configuration
-├── docker-compose.yml         # Docker Compose setup
-└── .env.example              # Environment variable template
+│   ├── app.log                    # Application logs (rotating file handler)
+│   ├── telemetry.jsonl            # Inference traces (one JSON per line)
+│   └── eval_metrics.json          # Quality metrics
+│
+├── main.py                        # Entry point
+├── requirements.txt               # Python dependencies
+├── Dockerfile                     # Container configuration
+├── docker-compose.yml             # Docker Compose setup
+├── .env.example                   # Environment variable template
+└── README.md                      # This file
 ```
 
 ## Configuration
 
-Edit `.env` file to configure:
+Edit `.env` file to configure the system:
 
 ```env
-# API Keys
-GOOGLE_API_KEY=your_gemini_key
-TAVILY_API_KEY=your_tavily_key
+# API Keys (Required)
+GOOGLE_API_KEY=your_gemini_api_key              # Google Gemini API key for LLM
+TAVILY_API_KEY=your_tavily_api_key              # Tavily API key for online search
 
 # LLM Configuration
-LLM_MODEL=gemini-pro
-EMBEDDING_MODEL=all-MiniLM-L6-v2
+LLM_MODEL=gemini-2.5-flash-lite                 # Model to use for generation & validation
+EMBEDDING_MODEL=all-MiniLM-L6-v2                # Model for semantic embeddings
 
-# RAG Parameters
-TOP_K_CHUNKS=5                    # Chunks to retrieve
-SIMILARITY_THRESHOLD=0.3          # Filter threshold
-CHUNK_SIZE_FOR_AGENTIC_CHUNKING=2000
+# RAG Parameters (Offline Mode)
+TOP_K_CHUNKS=5                                  # Number of knowledge base chunks to retrieve
+SIMILARITY_THRESHOLD=0.3                        # Minimum similarity score to return results
+CHUNK_SIZE_FOR_AGENTIC_CHUNKING=2000            # Character size for semantic chunks
 
-# Search Parameters
-MAX_ONLINE_SEARCH_RESULTS=5
-MIN_SOURCE_AGREEMENT_RATIO=0.6
+# Search Parameters (Online Mode)
+MAX_ONLINE_SEARCH_RESULTS=5                     # Number of web results to retrieve
+MIN_SOURCE_AGREEMENT_RATIO=0.6                  # Minimum relevance threshold for sources
+
+# Paths
+TELEMETRY_LOG_PATH=data/telemetry.jsonl         # Where to save inference traces
+EVAL_METRICS_PATH=data/eval_metrics.json        # Where to save evaluation metrics
 ```
 
-## Workflow
+**Important Version Information:**
+- **Python**: 3.11+ required
+- **LLM Model**: Currently using `gemini-2.5-flash-lite` (highly optimized for cost/speed)
+- **Embedding Model**: `all-MiniLM-L6-v2` (384-dimensional, fast & accurate)
+- **Vector Database**: FAISS (CPU-based, no external dependencies)
+- **Web Search**: Tavily API v1
+
+## Workflow & State Management
+
+The system uses **LangGraph** for orchestration with a stateful graph that processes queries:
 
 ```
-Query
+User Query (+ mode: offline/online)
   ↓
-[Router Agent] → Decides: offline | online | both
+[Query Decomposition] → LLM breaks complex question into subquestions
+  ├─ Identifies dependencies between subquestions
+  └─ Orders subquestions for logical execution
   ↓
-  ├→ [Offline Search] → Semantic search on KB
-  │   ↓
-  │   [Vector Search] → Top-K chunks from FAISS
+[Process Subquestions] → Loop through each subquestion
   │
-  └→ [Online Search] → Web search + validation
-      ↓
-      [Source Validation] → LLM-based credibility check
-      ↓
-      [Result Reranking] → Combined score ranking
+  ├─ If Offline Mode:
+  │   ├→ [Offline Search Agent] → FAISS semantic similarity search
+  │   └→ Retrieve top-K chunks with metadata & sources
+  │
+  └─ If Online Mode:
+      ├→ [Online Search Agent] → Tavily web search
+      ├→ [Result Validation] → LLM credibility assessment
+      └→ Retrieve top-5 results with relevance scores
   ↓
-[Answer Generation Agent] → Creates answer from evidence
+[Answer Generation Agent]
+  ├─ Takes question + retrieved evidence
+  ├─ Uses conversation history for context
+  ├─ Includes dependent answers for synthesis questions
+  ├─ Computes confidence: 60% evidence quality + 40% faithfulness
+  └─ Returns answer with citations
   ↓
-[Guardrail Agent] → Validates for safety
+[Guardrail Agent] → Safety validation
+  ├─ Checks for harmful/unsafe content
+  └─ Rejects if unsafe, keeps answer if safe
   ↓
-[Telemetry] → Logs trace + computes metrics
+[Telemetry & Metrics]
+  ├─ Logs full inference trace
+  ├─ Computes quality metrics (faithfulness, coverage, etc.)
+  └─ Saves to data/telemetry.jsonl
   ↓
-Answer to User
+[Format & Return]
+  ├─ Answer (displayed to user)
+  ├─ Sources (displayed to user)
+  └─ Metadata (logged only, not shown to user)
 ```
+
+### State Management with LangGraph
+
+The workflow maintains a `WorkflowState` dict that flows through the graph:
+
+- `query`: Original user question
+- `mode`: "offline" or "online"
+- `decomposition`: Parsed subquestions with dependencies
+- `question_answers`: Map of subquestion_id → (query, answer, evidence)
+- `final_answer`: The answer to return to user
+- `all_sources`: Aggregated citations from all subquestions
+- `conversation_history`: Previous messages for multi-turn conversations
 
 ## Evaluation Metrics
 
@@ -265,22 +354,87 @@ python -m main stats
 
 ## Development
 
+### Architecture: Onion Pattern with Dependency Injection
+
+The system follows strict onion architecture:
+- **Core**: Domain models (Pydantic), no dependencies
+- **Application**: Abstract interfaces, business logic, orchestration
+- **Infrastructure**: Concrete implementations, external API calls
+- **Presentation**: CLI interface
+
 ### Adding Custom Agents
 
-1. Create agent class in `app/application/agents.py`
-2. Inherit from base agent pattern
-3. Implement search/process methods
-4. Add to workflow in `app/application/workflow.py`
+To add a new custom agent:
+
+1. **Define interface** in `app/application/interfaces/my_agent.py`:
+```python
+from abc import ABC, abstractmethod
+from typing import Any
+
+class MyAgent(ABC):
+    @abstractmethod
+    def process(self, data: Any) -> Any:
+        pass
+```
+
+2. **Create implementation** in `app/infrastructure/agents/my_agent.py`:
+```python
+from app.application.interfaces import MyAgent as MyAgentInterface
+
+class MyAgent(MyAgentInterface):
+    def process(self, data: Any) -> Any:
+        # Your implementation
+        return result
+```
+
+3. **Use dependency injection** in workflow:
+```python
+from app.application import WorkflowOrchestrator
+
+workflow = WorkflowOrchestrator(
+    my_agent=MyAgent()  # Pass custom agent
+)
+```
 
 ### Extending RAG
 
-- Modify chunking in `AgenticChunker.chunk_document()`
-- Adjust similarity threshold in `config.py`
-- Add custom embedding models to `VectorStoreManager`
+**Modify Chunking Strategy**:
+- Edit `app/infrastructure/kb_manager.py` → `AgenticChunker._chunk_documents()`
+- Adjust `CHUNK_SIZE_FOR_AGENTIC_CHUNKING` in `.env`
 
-### Custom Evaluations
+**Change Embedding Model**:
+- Edit `app/infrastructure/kb_manager.py` → `VectorStoreManager.__init__()`
+- Update `EMBEDDING_MODEL` in `.env`
 
-Add metrics in `EvaluationMetrics` class in `app/infrastructure/telemetry.py`
+**Adjust Search Parameters**:
+- `TOP_K_CHUNKS`: Number of chunks to retrieve (default: 5)
+- `SIMILARITY_THRESHOLD`: Minimum similarity score (default: 0.3)
+
+### Custom Quality Metrics
+
+Add new metrics to `app/infrastructure/telemetry.py` → `EvaluationMetrics` class:
+
+```python
+def compute_custom_metric(self, answer: str, context: str) -> float:
+    """Your custom metric implementation."""
+    # LLM evaluation or heuristic-based
+    return score  # 0.0-1.0
+```
+
+### Testing with Dependency Injection
+
+Example: Testing with a mock agent:
+
+```python
+from app.application import WorkflowOrchestrator
+from unittest.mock import Mock
+
+mock_agent = Mock(spec=SearchAgent)
+mock_agent.search.return_value = EvidencePack(...)
+
+workflow = WorkflowOrchestrator(offline_agent=mock_agent)
+result = workflow.run("test query", mode="offline")
+```
 
 ## Troubleshooting
 

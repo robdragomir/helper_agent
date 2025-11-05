@@ -29,32 +29,17 @@ app = typer.Typer(
 console = Console()
 
 
-def _display_answer(answer, show_metadata: bool = True) -> None:
-    """Helper function to display answer and its metadata."""
+def _display_answer(answer) -> None:
+    """Helper function to display answer and sources."""
     # Display answer
     console.print(Panel(answer.text, title="Answer", border_style="green"))
     console.print()
 
-    if show_metadata:
-        # Display metadata
-        metadata_table = Table(title="Metadata")
-        metadata_table.add_column("Property", style="cyan")
-        metadata_table.add_column("Value", style="green")
-
-        metadata_table.add_row(
-            "Confidence", f"{answer.answer_confidence:.2%}"
-        )
-        metadata_table.add_row("Offline Sources", "✓" if answer.used_offline else "✗")
-        metadata_table.add_row("Online Sources", "✓" if answer.used_online else "✗")
-
-        console.print(metadata_table)
-        console.print()
-
-        # Display citations
-        if answer.citations:
-            console.print("[bold]Sources:[/bold]")
-            for citation in answer.citations:
-                console.print(f"  {citation['label']} {citation['source']} ({citation['note']})")
+    # Display sources
+    if answer.citations:
+        console.print("[bold]Sources:[/bold]")
+        for citation in answer.citations:
+            console.print(f"  {citation['label']} {citation['source']} ({citation['note']})")
 
 
 @app.command()
@@ -138,8 +123,8 @@ def ask(
                     conversation_history.append({"role": "user", "content": follow_up})
                     conversation_history.append({"role": "assistant", "content": follow_up_answer.text})
 
-                    # Display answer (without metadata for brevity)
-                    _display_answer(follow_up_answer, show_metadata=False)
+                    # Display answer and sources
+                    _display_answer(follow_up_answer)
 
                 except KeyboardInterrupt:
                     console.print("\n[yellow]Interrupted. Exiting interactive mode[/yellow]")
@@ -270,8 +255,7 @@ def interactive(
             console.print()
             answer = workflow.run(query, mode=mode)
 
-            console.print(f"[bold green]Assistant:[/bold green]")
-            console.print(answer.text)
+            _display_answer(answer)
             console.print()
 
         except KeyboardInterrupt:

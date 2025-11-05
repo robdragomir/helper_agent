@@ -17,14 +17,23 @@ from app.core import (
     FinalAnswer,
     InferenceTrace,
 )
-from app.application.agents import (
+from app.application.interfaces import (
+    DecompositionAgent,
+    SearchAgent,
+    AnswerAgent,
+    GuardrailAgent,
+    TelemetryLogger,
+    EvaluationMetrics,
+)
+from app.infrastructure.agents import (
     QueryDecompositionAgent,
     OfflineSearchAgent,
     OnlineSearchAgent,
-    AnswerGenerationAgent,
-    GuardrailAgent,
+    AnswerGenerationAgent as AnswerGenerationAgentImpl,
+    GuardrailAgentImpl,
 )
-from app.infrastructure.telemetry import TelemetryLogger, EvaluationMetrics
+from app.infrastructure.telemetry import TelemetryLogger as TelemetryLoggerImpl
+from app.infrastructure.telemetry import EvaluationMetrics as EvaluationMetricsImpl
 
 
 # Workflow State
@@ -55,14 +64,27 @@ class WorkflowState(dict):
 class WorkflowOrchestrator:
     """Orchestrates the multi-agent workflow using LangGraph."""
 
-    def __init__(self):
-        self.decomposition_agent = QueryDecompositionAgent()
-        self.offline_agent = OfflineSearchAgent()
-        self.online_agent = OnlineSearchAgent()
-        self.answer_agent = AnswerGenerationAgent()
-        self.guardrail_agent = GuardrailAgent()
-        self.telemetry = TelemetryLogger()
-        self.eval_metrics = EvaluationMetrics()
+    def __init__(
+        self,
+        decomposition_agent: Optional[DecompositionAgent] = None,
+        offline_agent: Optional[SearchAgent] = None,
+        online_agent: Optional[SearchAgent] = None,
+        answer_agent: Optional[AnswerAgent] = None,
+        guardrail_agent: Optional[GuardrailAgent] = None,
+        telemetry: Optional[TelemetryLogger] = None,
+        eval_metrics: Optional[EvaluationMetrics] = None,
+    ):
+        """
+        Initialize the workflow orchestrator with optional dependency injection.
+        If not provided, default implementations are created.
+        """
+        self.decomposition_agent: DecompositionAgent = decomposition_agent or QueryDecompositionAgent()
+        self.offline_agent: SearchAgent = offline_agent or OfflineSearchAgent()
+        self.online_agent: SearchAgent = online_agent or OnlineSearchAgent()
+        self.eval_metrics: EvaluationMetrics = eval_metrics or EvaluationMetricsImpl()
+        self.answer_agent: AnswerAgent = answer_agent or AnswerGenerationAgentImpl(self.eval_metrics)
+        self.guardrail_agent: GuardrailAgent = guardrail_agent or GuardrailAgentImpl()
+        self.telemetry: TelemetryLogger = telemetry or TelemetryLoggerImpl()
 
         self.graph = self._build_graph()
 
