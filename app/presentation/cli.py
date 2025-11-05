@@ -64,7 +64,7 @@ def ask(
         ...,
         "--mode",
         "-m",
-        help="Search mode: offline (local KB), online (web search), or both (combine sources)",
+        help="Search mode: offline (local KB) or online (web search)",
     ),
     interactive: bool = typer.Option(
         False,
@@ -79,7 +79,6 @@ def ask(
     You must specify a search mode:
     - offline: Search only in the local knowledge base
     - online: Search the web for latest information
-    - both: Search both sources and combine results
 
     Use --interactive to enter interactive mode after the first answer,
     where you can continue asking follow-up questions without restarting.
@@ -87,21 +86,17 @@ def ask(
     Examples:
         helper-agent ask "How do I create a basic graph?" --mode offline
         helper-agent ask "What are the latest features?" --mode online
-        helper-agent ask "How does state work?" --mode both
         helper-agent ask "What is StateGraph?" --mode offline --interactive
     """
     # Validate mode
-    if mode not in ["offline", "online", "both"]:
+    if mode not in ["offline", "online"]:
         console.print(
-            "[red]Error: Mode must be 'offline', 'online', or 'both'[/red]"
+            "[red]Error: Mode must be 'offline' or 'online'[/red]"
         )
         raise typer.Exit(1)
 
-    console.print(f"[cyan]Processing: {query}[/cyan]")
-    console.print()
-
     try:
-        # Get workflow and run
+        # Get workflow and run (no verbose output during processing)
         workflow = get_workflow()
 
         # Initialize conversation history
@@ -112,7 +107,8 @@ def ask(
         conversation_history.append({"role": "user", "content": query})
         conversation_history.append({"role": "assistant", "content": answer.text})
 
-        # Display answer
+        # Display only the answer and sources
+        console.print()
         _display_answer(answer)
 
         # Enter interactive mode if requested
@@ -234,22 +230,22 @@ def stats() -> None:
 @app.command()
 def interactive(
     mode: str = typer.Option(
-        "both",
+        "offline",
         "--mode",
         "-m",
-        help="Search mode: offline, online, or both",
+        help="Search mode: offline or online",
     ),
 ) -> None:
     """
     Start interactive chat mode.
 
     Uses the specified search mode for all queries in the conversation.
-    Default mode is 'both' (search both local KB and web).
+    Default mode is 'offline' (search local KB).
     """
     # Validate mode
-    if mode not in ["offline", "online", "both"]:
+    if mode not in ["offline", "online"]:
         console.print(
-            "[red]Error: Mode must be 'offline', 'online', or 'both'[/red]"
+            "[red]Error: Mode must be 'offline' or 'online'[/red]"
         )
         raise typer.Exit(1)
 

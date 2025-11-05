@@ -33,8 +33,8 @@ class WorkflowState(dict):
 
     def __init__(self, query: str, mode: Optional[str] = None):
         super().__init__()
-        if mode not in ["offline", "online", "both"]:
-            raise ValueError(f"Mode must be 'offline', 'online', or 'both', got '{mode}'")
+        if mode not in ["offline", "online"]:
+            raise ValueError(f"Mode must be 'offline' or 'online', got '{mode}'")
 
         self["trace_id"] = str(uuid.uuid4())
         self["query"] = query
@@ -146,32 +146,28 @@ class WorkflowOrchestrator:
                     req_query, req_answer, _ = state["question_answers"][req_id]
                     required_answers_context += f"\n[{req_id}] Q: {req_query}\nA: {req_answer.text}\n"
 
-        # Search for this question
-        offline_evidence = None
-        online_evidence = None
+        # Search for this question based on mode
         mode = state["mode"]
+        evidence = None
 
-        if mode in ["offline", "both"]:
-            offline_evidence = self.offline_agent.search(question_text)
-        if mode in ["online", "both"]:
-            online_evidence = self.online_agent.search(question_text)
+        if mode == "offline":
+            evidence = self.offline_agent.search(question_text)
+        elif mode == "online":
+            evidence = self.online_agent.search(question_text)
 
         # Track sources
         evidence_packs = []
-        if offline_evidence and offline_evidence.context_text:
-            evidence_packs.append(offline_evidence)
-            state["all_sources"].extend(offline_evidence.sources)
-        if online_evidence and online_evidence.context_text:
-            evidence_packs.append(online_evidence)
-            state["all_sources"].extend(online_evidence.sources)
+        if evidence and evidence.context_text:
+            evidence_packs.append(evidence)
+            state["all_sources"].extend(evidence.sources)
 
         # Generate answer
         if not evidence_packs and not requires:
             # No evidence and no dependencies - return empty answer
             answer = FinalAnswer(
                 text=f"No information found for: {question_text}",
-                used_offline=offline_evidence is not None,
-                used_online=online_evidence is not None,
+                used_offline=mode == "offline",
+                used_online=mode == "online",
                 answer_confidence=0.0,
                 citations=[],
             )
@@ -303,14 +299,14 @@ class WorkflowOrchestrator:
 
         Args:
             query: The user's question
-            mode: The search mode - must be 'offline', 'online', or 'both'
+            mode: The search mode - must be 'offline' or 'online'
             conversation_history: Optional list of conversation messages for context
 
         Returns:
             FinalAnswer with the response and aggregated sources from all subquestions
 
         Raises:
-            ValueError: If mode is not 'offline', 'online', or 'both'
+            ValueError: If mode is not 'offline' or 'online'
         """
         import logging
         logger = logging.getLogger(__name__)

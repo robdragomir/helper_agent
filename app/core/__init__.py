@@ -9,6 +9,7 @@ from .models import (
     InferenceTrace,
 )
 from .config import settings
+from .logging_config import configure_logging, get_logger
 
 __all__ = [
     "EvidencePack",
@@ -16,4 +17,6 @@ __all__ = [
     "KnowledgeBaseSnapshot",
     "InferenceTrace",
     "settings",
+    "configure_logging",
+    "get_logger",
 ]
