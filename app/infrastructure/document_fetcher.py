@@ -344,16 +344,15 @@ class DocumentFetcher:
 
     def _check_source_changes(self, source: str, new_metadata: List[DocumentMetadata], old_metadata_dict: Dict[str, DocumentMetadata]) -> bool:
         """
-        Check if a source has any changes by comparing hashes.
-        Returns True if any document changed, False otherwise.
+        Check if a source has any changes by comparing content hashes.
+        Returns True if any document's CONTENT actually changed, False otherwise.
+
+        Compares by filename, not by count, to avoid false positives when the
+        number of documents changes but content is identical.
         """
         if not new_metadata and not old_metadata_dict:
             logger.info(f"No {source} documents in either old or new")
             return False
-
-        if len(new_metadata) != len(old_metadata_dict):
-            logger.info(f"Number of {source} documents changed: {len(old_metadata_dict)} -> {len(new_metadata)}")
-            return True
 
         # Build hash map from old metadata for faster comparison
         old_hashes_by_filename = {}
@@ -362,21 +361,32 @@ class DocumentFetcher:
             old_hashes_by_filename[old_name] = old_meta.file_hash
             logger.debug(f"Old {source} document: {old_name} -> hash {old_meta.file_hash[:8]}...")
 
-        # Compare hashes of new documents
+        # Build hash map for new documents
+        new_hashes_by_filename = {}
         for meta in new_metadata:
             new_name = Path(meta.local_path).name
+            new_hashes_by_filename[new_name] = meta.file_hash
             logger.debug(f"New {source} document: {new_name} -> hash {meta.file_hash[:8]}...")
 
+        # Strategy: Compare actual content by hash, not by count
+        # Check 1: Are there any files in new that don't exist in old with the same hash?
+        for new_name, new_hash in new_hashes_by_filename.items():
             if new_name not in old_hashes_by_filename:
                 logger.info(f"New document found: {source}/{new_name}")
                 return True
 
             old_hash = old_hashes_by_filename[new_name]
-            if old_hash != meta.file_hash:
-                logger.info(f"Hash mismatch for {source}/{new_name}: {old_hash[:8]}... != {meta.file_hash[:8]}...")
+            if old_hash != new_hash:
+                logger.info(f"Hash mismatch for {source}/{new_name}: {old_hash[:8]}... != {new_hash[:8]}...")
                 return True
 
-        logger.info(f"No changes detected in {source} documents")
+        # Check 2: Are there files in old that don't exist in new? (documents were removed)
+        for old_name in old_hashes_by_filename.keys():
+            if old_name not in new_hashes_by_filename:
+                logger.info(f"Document removed: {source}/{old_name}")
+                return True
+
+        logger.info(f"No changes detected in {source} documents (content hashes match)")
         return False
 
     def _load_metadata(self) -> List[DocumentMetadata]:

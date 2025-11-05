@@ -29,48 +29,13 @@ app = typer.Typer(
 console = Console()
 
 
-@app.command()
-def ask(
-    query: str = typer.Argument(..., help="Your question about LangGraph"),
-    mode: str = typer.Option(
-        ...,
-        "--mode",
-        "-m",
-        help="Search mode: offline (local KB), online (web search), or both (combine sources)",
-    ),
-) -> None:
-    """
-    Ask a question about LangGraph.
-
-    You must specify a search mode:
-    - offline: Search only in the local knowledge base
-    - online: Search the web for latest information
-    - both: Search both sources and combine results
-
-    Examples:
-        helper-agent ask "How do I create a basic graph?" --mode offline
-        helper-agent ask "What are the latest features?" --mode online
-        helper-agent ask "How does state work?" --mode both
-    """
-    # Validate mode
-    if mode not in ["offline", "online", "both"]:
-        console.print(
-            "[red]Error: Mode must be 'offline', 'online', or 'both'[/red]"
-        )
-        raise typer.Exit(1)
-
-    console.print(f"[cyan]Processing: {query}[/cyan]")
+def _display_answer(answer, show_metadata: bool = True) -> None:
+    """Helper function to display answer and its metadata."""
+    # Display answer
+    console.print(Panel(answer.text, title="Answer", border_style="green"))
     console.print()
 
-    try:
-        # Get workflow and run
-        workflow = get_workflow()
-        answer = workflow.run(query, mode=mode)
-
-        # Display answer
-        console.print(Panel(answer.text, title="Answer", border_style="green"))
-        console.print()
-
+    if show_metadata:
         # Display metadata
         metadata_table = Table(title="Metadata")
         metadata_table.add_column("Property", style="cyan")
@@ -90,6 +55,101 @@ def ask(
             console.print("[bold]Sources:[/bold]")
             for citation in answer.citations:
                 console.print(f"  {citation['label']} {citation['source']} ({citation['note']})")
+
+
+@app.command()
+def ask(
+    query: str = typer.Argument(..., help="Your question about LangGraph"),
+    mode: str = typer.Option(
+        ...,
+        "--mode",
+        "-m",
+        help="Search mode: offline (local KB), online (web search), or both (combine sources)",
+    ),
+    interactive: bool = typer.Option(
+        False,
+        "--interactive",
+        "-i",
+        help="Start interactive mode after answering the initial question",
+    ),
+) -> None:
+    """
+    Ask a question about LangGraph.
+
+    You must specify a search mode:
+    - offline: Search only in the local knowledge base
+    - online: Search the web for latest information
+    - both: Search both sources and combine results
+
+    Use --interactive to enter interactive mode after the first answer,
+    where you can continue asking follow-up questions without restarting.
+
+    Examples:
+        helper-agent ask "How do I create a basic graph?" --mode offline
+        helper-agent ask "What are the latest features?" --mode online
+        helper-agent ask "How does state work?" --mode both
+        helper-agent ask "What is StateGraph?" --mode offline --interactive
+    """
+    # Validate mode
+    if mode not in ["offline", "online", "both"]:
+        console.print(
+            "[red]Error: Mode must be 'offline', 'online', or 'both'[/red]"
+        )
+        raise typer.Exit(1)
+
+    console.print(f"[cyan]Processing: {query}[/cyan]")
+    console.print()
+
+    try:
+        # Get workflow and run
+        workflow = get_workflow()
+
+        # Initialize conversation history
+        conversation_history = []
+
+        # Process initial query
+        answer = workflow.run(query, mode=mode, conversation_history=conversation_history)
+        conversation_history.append({"role": "user", "content": query})
+        conversation_history.append({"role": "assistant", "content": answer.text})
+
+        # Display answer
+        _display_answer(answer)
+
+        # Enter interactive mode if requested
+        if interactive:
+            console.print("[cyan bold]Entering interactive mode[/cyan bold]")
+            console.print("[dim]Type 'exit' to quit interactive mode[/dim]\n")
+
+            while True:
+                try:
+                    follow_up = console.input("[bold cyan]You:[/bold cyan] ")
+
+                    if follow_up.lower() in ["exit", "quit", "q"]:
+                        console.print("[yellow]Exiting interactive mode[/yellow]")
+                        break
+
+                    if not follow_up.strip():
+                        continue
+
+                    console.print()
+
+                    # Run with conversation history
+                    follow_up_answer = workflow.run(
+                        follow_up,
+                        mode=mode,
+                        conversation_history=conversation_history
+                    )
+                    conversation_history.append({"role": "user", "content": follow_up})
+                    conversation_history.append({"role": "assistant", "content": follow_up_answer.text})
+
+                    # Display answer (without metadata for brevity)
+                    _display_answer(follow_up_answer, show_metadata=False)
+
+                except KeyboardInterrupt:
+                    console.print("\n[yellow]Interrupted. Exiting interactive mode[/yellow]")
+                    break
+                except Exception as e:
+                    console.print(f"[red]Error: {str(e)}[/red]\n")
 
     except Exception as e:
         console.print(f"[red]Error: {str(e)}[/red]")
