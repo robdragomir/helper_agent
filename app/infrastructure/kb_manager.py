@@ -8,8 +8,9 @@ import hashlib
 import os
 import logging
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Dict, Tuple
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
 from sentence_transformers import SentenceTransformer
@@ -20,6 +21,7 @@ from langchain_core.messages import SystemMessage, HumanMessage
 
 from app.core import settings
 from app.core.models import KnowledgeBaseSnapshot
+from app.infrastructure.document_fetcher import DocumentFetcher
 
 # Configure logging
 logging.basicConfig(
@@ -273,37 +275,48 @@ class KnowledgeBaseManager:
 
     def build_kb(self, force_rebuild: bool = False) -> bool:
         """
-        Build or rebuild the knowledge base.
-        Downloads latest docs, chunks them, creates embeddings, and saves vector store.
+        Build or rebuild the knowledge base from multiple sources (LangGraph + LangChain).
+        Implements smart change detection:
+        - Downloads to temp directory and compares with working directory
+        - Only rebuilds embeddings for changed sources (or all if force_rebuild=True)
+        - Cleans up temporary downloads after completion
         """
         try:
             logger.info(f"Starting KB build (force_rebuild={force_rebuild})")
 
-            # Load local docs if they exist
-            logger.info("Loading local docs if available...")
-            local_content = self._load_local_docs()
-            local_hash = self._compute_hash(local_content) if local_content else None
-            if local_content:
-                logger.info(f"Loaded local docs: {len(local_content)} chars")
-            else:
-                logger.info("No local docs found")
+            # Initialize document fetcher
+            fetcher = DocumentFetcher(data_dir="data")
 
-            # Try to download latest docs
-            logger.info(f"Downloading docs from {settings.langgraph_docs_url}")
-            remote_content = self._download_docs(settings.langgraph_docs_url)
-            remote_hash = self._compute_hash(remote_content)
-            logger.info(f"Downloaded remote docs: {len(remote_content)} chars")
+            # Check for updates (downloads to temp dir and compares)
+            logger.info("Fetching and checking all document sources...")
+            changed_sources, all_new_metadata = fetcher.check_for_updates()
+
+            # Load all documents from disk
+            logger.info("Loading all documents from disk...")
+            all_documents = fetcher.load_all_documents()
+
+            if not all_documents:
+                logger.error("No documents found")
+                print("Error: No documents found")
+                return False
+
+            logger.info(f"Loaded {len(all_documents)} documents for embedding")
 
             # Check if rebuild is needed
-            logger.info("Checking if rebuild is needed...")
             existing_snapshot = self._load_snapshot()
-            needs_rebuild = (
+
+            # Compute hash of all documents combined
+            combined_content = "\n\n".join(all_documents.values())
+            content_hash = self._compute_hash(combined_content)
+
+            # Determine if we need to rebuild
+            needs_full_rebuild = (
                 force_rebuild
                 or existing_snapshot is None
-                or existing_snapshot.content_hash != remote_hash
+                or len(changed_sources) > 0
             )
 
-            if not needs_rebuild:
+            if not needs_full_rebuild:
                 logger.info("KB is up to date. Loading existing vector store...")
                 print("KB is up to date. Loading existing vector store...")
                 self.vector_store.load(settings.vector_store_path)
@@ -311,22 +324,18 @@ class KnowledgeBaseManager:
                 logger.info("Successfully loaded existing vector store")
                 return True
 
-            # Update local docs if remote is different
-            if remote_hash != local_hash:
-                logger.info("Remote docs differ from local. Updating local copy...")
-                print("Remote docs differ from local. Updating local copy...")
-                self._save_local_docs(remote_content)
-                content_to_chunk = remote_content
-            else:
-                logger.info("Using local docs (same as remote)")
-                content_to_chunk = local_content
+            if changed_sources and not force_rebuild:
+                logger.info(f"Changed sources detected: {changed_sources}. Rebuilding embeddings...")
+                print(f"Changed sources detected: {changed_sources}. Rebuilding embeddings...")
 
-            print("Building knowledge base...")
-            logger.info("Starting chunking process...")
-            # Chunk the content
-            chunks = self.chunker.chunk_document(content_to_chunk)
-            logger.info(f"Chunking complete: {len(chunks)} chunks created")
-            print(f"Created {len(chunks)} chunks")
+            print("Building knowledge base from multiple sources (LangGraph + LangChain)...")
+            logger.info(f"Starting agentic chunking for {len(all_documents)} documents...")
+
+            # Create chunks using intelligent agentic chunking with parallelization
+            chunks = self._chunk_documents(all_documents)
+
+            logger.info(f"Created {len(chunks)} embedding chunks from {len(all_documents)} documents")
+            print(f"Created {len(chunks)} embedding chunks from {len(all_documents)} documents")
 
             # Create vector index
             logger.info("Creating vector index from chunks...")
@@ -340,18 +349,18 @@ class KnowledgeBaseManager:
             # Save snapshot
             logger.info("Creating and saving snapshot...")
             snapshot = KnowledgeBaseSnapshot(
-                source_url=settings.langgraph_docs_url,
-                local_file_path=settings.local_docs_path,
-                content_hash=remote_hash,
+                source_url="multi-source (LangGraph + LangChain)",
+                local_file_path="data/documents/",
+                content_hash=content_hash,
                 last_updated_at=datetime.now(),
-                embedding_index_version="1.0",
+                embedding_index_version="3.0",
                 is_fresh=True,
             )
             self._save_snapshot(snapshot)
             self.snapshot = snapshot
             logger.info("Snapshot saved")
 
-            print("Knowledge base built successfully!")
+            print("Knowledge base built successfully from multiple sources!")
             logger.info("KB build completed successfully")
             return True
 
@@ -359,6 +368,60 @@ class KnowledgeBaseManager:
             logger.exception(f"Error building KB: {e}")
             print(f"Error building KB: {e}")
             return False
+
+    def _chunk_documents(self, documents: Dict[str, str]) -> List[str]:
+        """
+        Chunk documents intelligently with parallelization:
+        - Files below threshold: embed as-is
+        - Files above threshold: use agentic chunking in parallel
+
+        Threshold is configurable in .env via agentic_chunking_threshold_kb (in KB).
+        """
+        threshold_bytes = settings.agentic_chunking_threshold_kb * 1024
+        logger.info(f"Chunking threshold: {settings.agentic_chunking_threshold_kb}KB ({threshold_bytes} bytes)")
+
+        # Separate documents into two groups
+        small_docs = []
+        large_docs = []
+
+        for file_path, content in documents.items():
+            file_name = Path(file_path).name
+            content_size = len(content.encode('utf-8'))
+
+            if content_size < threshold_bytes:
+                small_docs.append((file_name, content))
+            else:
+                large_docs.append((file_name, content))
+
+        chunks = []
+
+        # Add small documents as-is
+        logger.info(f"Embedding {len(small_docs)} small documents as-is")
+        for file_name, content in small_docs:
+            logger.info(f"  {file_name}: {len(content.encode('utf-8'))} bytes (embedding as-is)")
+            chunks.append(content)
+
+        # Process large documents in parallel using agentic chunking
+        if large_docs:
+            logger.info(f"Agentic chunking {len(large_docs)} large documents in parallel...")
+            with ThreadPoolExecutor(max_workers=4) as executor:
+                # Submit all tasks
+                future_to_filename = {
+                    executor.submit(self.chunker.chunk_document, content): file_name
+                    for file_name, content in large_docs
+                }
+
+                # Collect results as they complete
+                for future in as_completed(future_to_filename):
+                    file_name = future_to_filename[future]
+                    try:
+                        file_chunks = future.result()
+                        logger.info(f"  {file_name}: produced {len(file_chunks)} chunks")
+                        chunks.extend(file_chunks)
+                    except Exception as e:
+                        logger.error(f"  {file_name}: chunking failed - {e}")
+
+        return chunks
 
     def search_offline(self, query: str, top_k: Optional[int] = None) -> List[tuple]:
         """Search the local knowledge base."""

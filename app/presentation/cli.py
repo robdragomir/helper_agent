@@ -95,18 +95,28 @@ def ask(
 
 
 @app.command()
-def build_kb(force: bool = typer.Option(False, "--force", "-f", help="Force rebuild")) -> None:
+def build_kb(
+    force_rebuild: bool = typer.Option(
+        False,
+        "--force-rebuild",
+        "-f",
+        help="Force rebuild everything without checking for changes"
+    )
+) -> None:
     """
-    Build or rebuild the knowledge base.
+    Build or rebuild the knowledge base from multiple sources.
 
-    This downloads the latest LangGraph documentation and creates embeddings.
-    Use --force to rebuild even if KB is up to date.
+    This downloads the latest LangGraph and LangChain documentation,
+    detects changes, and creates embeddings.
+
+    By default, it checks if documents have changed and only rebuilds if needed.
+    Use --force-rebuild to skip change detection and rebuild everything.
     """
-    console.print("[cyan]Building knowledge base...[/cyan]")
+    console.print("[cyan]Building knowledge base from multiple sources (LangGraph + LangChain)...[/cyan]")
 
     try:
         kb_manager = KnowledgeBaseManager()
-        success = kb_manager.build_kb(force_rebuild=force)
+        success = kb_manager.build_kb(force_rebuild=force_rebuild)
 
         if success:
             console.print("[green]✓ Knowledge base built successfully[/green]")

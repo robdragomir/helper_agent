@@ -19,7 +19,8 @@ class Settings(BaseSettings):
     embedding_model: str = "all-MiniLM-L6-v2"
 
     # Knowledge Base Configuration
-    langgraph_docs_url: str = "https://langchain-ai.github.io/langgraph/reference/langgraph_docs.txt"
+    langgraph_docs_url: str = "https://langchain-ai.github.io/langgraph/reference/llms-full.txt"
+    langchain_docs_url: str = "https://docs.langchain.com/llms.txt"
     local_docs_path: str = "data/langgraph-docs.txt"
     kb_chunks_path: str = "data/kb_chunks.json"
     vector_store_path: str = "data/faiss_index"
@@ -38,6 +39,7 @@ class Settings(BaseSettings):
 
     # Model Configuration
     chunk_size_for_agentic_chunking: int = 2000
+    agentic_chunking_threshold_kb: int = 30  # File size threshold in KB for agentic chunking
 
     class Config:
         """Pydantic settings configuration."""

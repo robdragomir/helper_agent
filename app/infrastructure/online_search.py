@@ -56,15 +56,50 @@ class OnlineSearchManager:
         logger.info(f"ChatGoogleGenerativeAI initialized with model={settings.llm_model}")
 
     def search(self, query: str) -> List[SearchResult]:
-        """Search the web for relevant information."""
+        """
+        Search the web for relevant information.
+        Searches for both LangGraph and LangChain documentation.
+        """
         try:
-            # Enhance query to specifically target Python LangGraph library
-            enhanced_query = f"{query} python langgraph library"
-            logger.info(f"Searching with enhanced query: '{enhanced_query}'")
+            all_search_results = []
 
-            results = self.tavily_search.invoke(enhanced_query)
+            # Search for LangGraph results
+            langgraph_query = f"{query} python langgraph library"
+            logger.info(f"Searching LangGraph with: '{langgraph_query}'")
+            langgraph_results = self._search_tavily(langgraph_query)
+            all_search_results.extend(langgraph_results)
+            logger.info(f"LangGraph search returned {len(langgraph_results)} results")
+
+            # Search for LangChain results
+            langchain_query = f"{query} python langchain library"
+            logger.info(f"Searching LangChain with: '{langchain_query}'")
+            langchain_results = self._search_tavily(langchain_query)
+            all_search_results.extend(langchain_results)
+            logger.info(f"LangChain search returned {len(langchain_results)} results")
+
+            # Remove duplicates (by URL)
+            seen_urls = set()
+            deduplicated_results = []
+            for result in all_search_results:
+                if result.url not in seen_urls:
+                    deduplicated_results.append(result)
+                    seen_urls.add(result.url)
+
+            logger.info(f"OnlineSearchManager.search() returning {len(deduplicated_results)} deduplicated results")
+            return deduplicated_results
+
+        except Exception as e:
+            logger.error(f"Error during online search: {e}", exc_info=True)
+            return []
+
+    def _search_tavily(self, query: str) -> List[SearchResult]:
+        """
+        Internal method to search Tavily for a specific query.
+        Returns list of SearchResult objects.
+        """
+        try:
+            results = self.tavily_search.invoke(query)
             logger.info(f"Tavily raw response type: {type(results)}")
-            logger.info(f"Tavily raw response: {results}")
 
             search_results = []
             if isinstance(results, str):
@@ -98,11 +133,10 @@ class OnlineSearchManager:
                 search_results.append(search_result)
                 logger.debug(f"Added search result: {search_result.title} (content length: {len(content)})")
 
-            logger.info(f"OnlineSearchManager.search() returning {len(search_results)} results")
             return search_results
 
         except Exception as e:
-            logger.error(f"Error during online search: {e}", exc_info=True)
+            logger.error(f"Error during Tavily search: {e}", exc_info=True)
             return []
 
     def _parse_tavily_response(self, response_str: str) -> List[Dict]:
