@@ -4,12 +4,21 @@ Guardrail agent implementation - validates user queries before processing.
 
 import json
 from typing import Dict, Any
+from pydantic import BaseModel, Field
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import SystemMessage, HumanMessage
 
 from app.core import settings
 from app.application.interfaces import GuardrailAgent as GuardrailAgentInterface
+
+
+class GuardrailResponse(BaseModel):
+    """Structured response schema for guardrail validation."""
+    is_safe: bool = Field(description="Whether the content is safe and appropriate")
+    is_in_scope: bool = Field(description="Whether the query is relevant to LangChain/LangGraph/AI engineering")
+    decision: str = Field(description="Decision: 'allow', 'reject', or 'block'")
+    reason: str = Field(description="Short explanation of the decision")
 
 
 class GuardrailAgent(GuardrailAgentInterface):
@@ -19,6 +28,8 @@ class GuardrailAgent(GuardrailAgentInterface):
         self.llm = ChatGoogleGenerativeAI(
             model=settings.llm_model,
             google_api_key=settings.google_api_key,
+            response_mime_type="application/json",
+            response_schema=GuardrailResponse.model_json_schema(),
         )
 
     def validate(self, query: str) -> Dict[str, Any]:
@@ -70,6 +81,7 @@ class GuardrailAgent(GuardrailAgentInterface):
             content=f"User query: {query}\n\nEvaluate this query for safety and relevance to LangChain/LangGraph/AI engineering topics."
         )
 
+        response_text = ""
         try:
             response = self.llm.invoke([system_message, human_message])
             response_text = response.content if hasattr(response, "content") else str(response)
@@ -84,7 +96,8 @@ class GuardrailAgent(GuardrailAgentInterface):
 
             return result
 
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse guardrail response as JSON: {e}. Response was: {response_text}")
             # If parsing fails, default to allowing (fail-open for safety)
             return {
                 "is_safe": True,
@@ -93,7 +106,7 @@ class GuardrailAgent(GuardrailAgentInterface):
                 "reason": "Could not validate query, allowing to proceed."
             }
         except Exception as e:
-            print(f"Error in query guardrail validation: {e}")
+            logger.error(f"Error in query guardrail validation: {e}", exc_info=True)
             return {
                 "is_safe": True,
                 "is_in_scope": True,

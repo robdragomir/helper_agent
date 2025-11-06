@@ -99,6 +99,8 @@ class WorkflowOrchestrator:
         graph.add_node("decompose", self._decompose_node)
         graph.add_node("process_subquestion", self._process_subquestion_node)
         graph.add_node("validate_answer", self._validate_answer_node)
+        graph.add_node("handle_reject", self._handle_guardrail_reject)
+        graph.add_node("handle_block", self._handle_guardrail_block)
         graph.add_node("finalize", self._finalize_node)
 
         # Start with guardrail check
@@ -110,8 +112,8 @@ class WorkflowOrchestrator:
             self._check_guardrail_decision,
             {
                 "allow": "decompose",
-                "reject": "finalize",
-                "block": "finalize"
+                "reject": "handle_reject",
+                "block": "handle_block"
             }
         )
 
@@ -130,6 +132,10 @@ class WorkflowOrchestrator:
 
         # Validate -> finalize
         graph.add_edge("validate_answer", "finalize")
+
+        # Handle reject and block -> finalize
+        graph.add_edge("handle_reject", "finalize")
+        graph.add_edge("handle_block", "finalize")
 
         # End
         graph.add_edge("finalize", END)
@@ -163,25 +169,33 @@ class WorkflowOrchestrator:
         if decision == "allow":
             return "allow"
         elif decision == "reject":
-            # Create an answer indicating the query is out of scope
-            state["final_answer"] = FinalAnswer(
-                text=f"I can only help with LangChain, LangGraph, and related AI engineering topics. {guardrail_result.get('reason', 'Your query appears to be out of scope.')}",
-                used_offline=False,
-                used_online=False,
-                answer_confidence=0.0,
-                citations=[],
-            )
             return "reject"
         else:  # block
-            # Create an answer indicating the query is blocked for safety
-            state["final_answer"] = FinalAnswer(
-                text=f"I cannot process this request for safety reasons. {guardrail_result.get('reason', 'Your query contains inappropriate content.')}",
-                used_offline=False,
-                used_online=False,
-                answer_confidence=0.0,
-                citations=[],
-            )
             return "block"
+
+    def _handle_guardrail_reject(self, state: WorkflowState) -> WorkflowState:
+        """Handle rejected query (out of scope)."""
+        guardrail_result = state.get("guardrail_result", {})
+        state["final_answer"] = FinalAnswer(
+            text=f"I can only help with LangChain, LangGraph, and related AI engineering topics. {guardrail_result.get('reason', 'Your query appears to be out of scope.')}",
+            used_offline=False,
+            used_online=False,
+            answer_confidence=0.0,
+            citations=[],
+        )
+        return state
+
+    def _handle_guardrail_block(self, state: WorkflowState) -> WorkflowState:
+        """Handle blocked query (safety issue)."""
+        guardrail_result = state.get("guardrail_result", {})
+        state["final_answer"] = FinalAnswer(
+            text=f"I cannot process this request for safety reasons. {guardrail_result.get('reason', 'Your query contains inappropriate content.')}",
+            used_offline=False,
+            used_online=False,
+            answer_confidence=0.0,
+            citations=[],
+        )
+        return state
 
     def _decompose_node(self, state: WorkflowState) -> WorkflowState:
         """Decompose the user query into subquestions."""
